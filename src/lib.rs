@@ -1,32 +1,50 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+pub use api::GlowmarktEndpoint;
+use time::OffsetDateTime;
 
 mod api;
 mod error;
 
 pub use error::Error;
+pub type VirtualEntity = api::VirtualEntityDetail;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+pub fn iso(dt: OffsetDateTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        dt.year(),
+        dt.month() as u8 + 1,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second()
+    )
+}
+
+#[derive(Debug, Clone)]
 pub struct Glowmarkt {
-    pub account_id: String,
-    pub token: String,
-    pub expiry: u64,
+    endpoint: GlowmarktEndpoint,
+    token: String,
 }
 
 impl Glowmarkt {
     pub async fn authenticate(username: String, password: String) -> Result<Self, Error> {
-        let client = Client::new();
+        GlowmarktEndpoint::default()
+            .authenticate(username, password)
+            .await
+    }
 
-        let response = api::auth(&client, &api::AuthRequest { username, password }).await?;
+    pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
+        let response = self.endpoint.virtual_entities(&self.token).await?;
+        let mut entities = Vec::new();
 
-        if !response.valid {
-            return Error::err("Authentication error");
+        for entity in response {
+            let entity = self
+                .endpoint
+                .virtual_entity(&self.token, &entity.id)
+                .await?;
+            entities.push(entity);
         }
 
-        Ok(Self {
-            account_id: response.account_id,
-            token: response.token,
-            expiry: response.exp,
-        })
+        log::trace!("Saw entities: {:?}", entities);
+        Ok(entities)
     }
 }
