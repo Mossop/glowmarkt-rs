@@ -4,20 +4,8 @@ use time::OffsetDateTime;
 mod api;
 mod error;
 
+pub use api::{Reading, ReadingPeriod, VirtualEntityDetail as VirtualEntity};
 pub use error::Error;
-pub type VirtualEntity = api::VirtualEntityDetail;
-
-pub fn iso(dt: OffsetDateTime) -> String {
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        dt.year(),
-        dt.month() as u8 + 1,
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second()
-    )
-}
 
 #[derive(Debug, Clone)]
 pub struct Glowmarkt {
@@ -46,5 +34,17 @@ impl Glowmarkt {
 
         log::trace!("Saw entities: {:?}", entities);
         Ok(entities)
+    }
+
+    pub async fn readings(
+        &self,
+        resource_id: &str,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
+        period: ReadingPeriod,
+    ) -> Result<Vec<Reading>, Error> {
+        self.endpoint
+            .readings(&self.token, resource_id, start, end, period)
+            .await
     }
 }

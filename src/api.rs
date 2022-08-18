@@ -1,15 +1,27 @@
 use std::fmt::Display;
 
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, Request, RequestBuilder};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime, UtcOffset};
 
-use crate::{iso, Error};
+use crate::Error;
 
 // Developed based on https://bitbucket.org/ijosh/brightglowmarkt/src/master/
 
 pub const BASE_URL: &str = "https://api.glowmarkt.com/api/v0-1";
 pub const APPLICATION_ID: &str = "b0f1b774-a586-4f72-9edd-27ead8aa7a8d";
+
+fn iso(dt: OffsetDateTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second()
+    )
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReadingPeriod {
@@ -17,11 +29,11 @@ pub enum ReadingPeriod {
     Hour,
     Day,
     Week,
-    Month,
-    Year,
+    // Month,
+    // Year,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(from = "String")]
 pub enum ResourceClass {
     Unknown,
@@ -65,33 +77,33 @@ pub struct AuthResponse {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct VirtualEntityBase {
-    #[serde(rename = "veId")]
+    #[serde(rename(deserialize = "veId"))]
     pub id: String,
-    #[serde(rename = "veTypeId")]
+    #[serde(rename(deserialize = "veTypeId"))]
     pub type_id: String,
     pub name: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceDetail {
-    #[serde(rename = "resourceId")]
+    #[serde(rename(deserialize = "resourceId"))]
     pub id: String,
-    #[serde(rename = "resourceTypeId")]
+    #[serde(rename(deserialize = "resourceTypeId"))]
     pub type_id: String,
     pub name: String,
-    #[serde(rename = "classifier")]
+    #[serde(rename(deserialize = "classifier"))]
     pub class: ResourceClass,
     pub description: String,
     pub base_unit: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct VirtualEntityDetail {
-    #[serde(rename = "veId")]
+    #[serde(rename(deserialize = "veId"))]
     pub id: String,
-    #[serde(rename = "veTypeId")]
+    #[serde(rename(deserialize = "veTypeId"))]
     pub type_id: String,
     pub name: String,
     pub resources: Vec<ResourceDetail>,
@@ -99,33 +111,27 @@ pub struct VirtualEntityDetail {
 
 type ReadingTuple = (i64, f32);
 
-#[derive(Deserialize, Debug)]
-#[serde(from = "ReadingTuple")]
+#[derive(Serialize, Debug)]
 pub struct Reading {
-    pub timestamp: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub start: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub end: OffsetDateTime,
     pub value: f32,
-}
-
-impl From<ReadingTuple> for Reading {
-    fn from((timestamp, value): ReadingTuple) -> Reading {
-        Reading {
-            timestamp: OffsetDateTime::from_unix_timestamp(timestamp).unwrap(),
-            value,
-        }
-    }
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingsResponse {
-    pub data: Vec<Reading>,
+    pub data: Vec<ReadingTuple>,
 }
 
-async fn api_call<T>(builder: RequestBuilder) -> Result<T, Error>
+async fn api_call<T>(client: &Client, request: Request) -> Result<T, Error>
 where
     T: DeserializeOwned,
 {
-    let response = builder.send().await?;
+    log::trace!("Sending {} request to {}", request.method(), request.url());
+    let response = client.execute(request).await?;
 
     if !response.status().is_success() {
         return Error::err(format!(
@@ -160,10 +166,13 @@ impl GlowmarktEndpoint {
         username: String,
         password: String,
     ) -> Result<crate::Glowmarkt, Error> {
-        let response: AuthResponse =
-            api_call(self.post_request("auth", &AuthRequest { username, password }))
-                .await
-                .map_err(|e| format!("Error authenticating: {}", e))?;
+        let response: AuthResponse = api_call(
+            &self.client,
+            self.post_request("auth", &AuthRequest { username, password })
+                .build()?,
+        )
+        .await
+        .map_err(|e| format!("Error authenticating: {}", e))?;
 
         if !response.valid {
             return Error::err("Authentication error");
@@ -195,9 +204,14 @@ impl GlowmarktEndpoint {
         &self,
         token: &str,
     ) -> Result<Vec<VirtualEntityBase>, Error> {
-        api_call(self.get_request("virtualentity").header("token", token))
-            .await
-            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+        api_call(
+            &self.client,
+            self.get_request("virtualentity")
+                .header("token", token)
+                .build()?,
+        )
+        .await
+        .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
     }
 
     pub(crate) async fn virtual_entity(
@@ -206,39 +220,65 @@ impl GlowmarktEndpoint {
         entity_id: &str,
     ) -> Result<VirtualEntityDetail, Error> {
         api_call(
+            &self.client,
             self.get_request(format!("virtualentity/{}/resources", entity_id))
-                .header("token", token),
+                .header("token", token)
+                .build()?,
         )
         .await
         .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
     }
 
-    // pub(crate) async fn readings(
-    //     &self,
-    //     token: &str,
-    //     resource_id: &str,
-    //     start: OffsetDateTime,
-    //     end: OffsetDateTime,
-    //     period: ReadingPeriod,
-    // ) -> Result<Vec<Reading>, Error> {
-    //     if start.offset() != end.offset() {
-    //         return Error::err("Start and end of reading range must be in the same timezone.");
-    //     }
+    pub(crate) async fn readings(
+        &self,
+        token: &str,
+        resource_id: &str,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
+        period: ReadingPeriod,
+    ) -> Result<Vec<Reading>, Error> {
+        let period_arg = match period {
+            ReadingPeriod::HalfHour => "PT30M".to_string(),
+            ReadingPeriod::Hour => "PT1H".to_string(),
+            ReadingPeriod::Day => "P1D".to_string(),
+            ReadingPeriod::Week => "P1W".to_string(),
+            // ReadingPeriod::Month => "P1M".to_string(),
+            // ReadingPeriod::Year => "P1Y".to_string(),
+        };
 
-    //     let readings = api_call::<ReadingsResponse>(
-    //         self.get_request(format!("resource/{}/readings", resource_id))
-    //             .query(&[
-    //                 ("from", iso(start)),
-    //                 ("to", iso(end)),
-    //                 ("period", ""),
-    //                 ("offset", ""),
-    //                 ("function", "sum"),
-    //             ])
-    //             .header("token", token),
-    //     )
-    //     .await
-    //     .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
+        let readings = api_call::<ReadingsResponse>(
+            &self.client,
+            self.get_request(format!("resource/{}/readings", resource_id))
+                .query(&[
+                    ("from", iso(start.to_offset(UtcOffset::UTC))),
+                    ("to", iso(end.to_offset(UtcOffset::UTC))),
+                    ("period", period_arg),
+                    ("offset", 0.to_string()),
+                    ("function", "sum".to_string()),
+                ])
+                .header("token", token)
+                .build()?,
+        )
+        .await
+        .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
 
-    //     Ok(readings.data)
-    // }
+        log::trace!("Received readings {:?}", readings.data);
+
+        Ok(readings
+            .data
+            .into_iter()
+            .map(|(timestamp, value)| {
+                let start = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
+
+                let end = match period {
+                    ReadingPeriod::HalfHour => start + Duration::minutes(30),
+                    ReadingPeriod::Hour => start + Duration::hours(1),
+                    ReadingPeriod::Day => start + Duration::days(1),
+                    ReadingPeriod::Week => start + Duration::weeks(1),
+                };
+
+                Reading { start, end, value }
+            })
+            .collect())
+    }
 }
