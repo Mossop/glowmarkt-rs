@@ -1,37 +1,10 @@
 use std::fmt::Display;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use flexi_logger::Logger;
 use glowmarkt::{GlowmarktApi, ReadingPeriod};
 use serde_json::to_string_pretty;
 use time::{format_description::well_known::Iso8601, OffsetDateTime};
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Format {
-    /// A plain text format for humans to read.
-    Text,
-    /// JSON for processing by other tools.
-    Json,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Period {
-    HalfHour,
-    Hour,
-    Day,
-    Week,
-}
-
-impl From<Period> for ReadingPeriod {
-    fn from(period: Period) -> Self {
-        match period {
-            Period::HalfHour => ReadingPeriod::HalfHour,
-            Period::Hour => ReadingPeriod::Hour,
-            Period::Day => ReadingPeriod::Day,
-            Period::Week => ReadingPeriod::Week,
-        }
-    }
-}
 
 #[derive(Parser)]
 #[clap(author, version, about)]
@@ -40,8 +13,6 @@ struct Args {
     pub username: Option<String>,
     #[clap(short, long, env)]
     pub password: Option<String>,
-    #[clap(short, long, env, arg_enum, value_parser, default_value_t = Format::Text)]
-    pub format: Format,
 
     #[clap(subcommand)]
     command: Command,
@@ -53,16 +24,16 @@ enum Command {
     List,
     /// Lists meter readings
     Readings {
-        /// The meter to read.
-        resource: String,
+        /// The resource to read.
+        resource_id: String,
         /// Start time of first reading.
         from: String,
         /// Start time of last reading (defaults to now).
         to: Option<String>,
-
-        /// The period of readings.
-        #[clap(short, long, arg_enum, value_parser, default_value_t = Period::Hour)]
-        period: Period,
+    },
+    Resource {
+        /// The resource to display.
+        resource_id: String,
     },
 }
 
@@ -76,24 +47,17 @@ impl<V, D: Display> ErrorStr<V> for Result<V, D> {
     }
 }
 
-async fn list(api: GlowmarktApi, format: Format) -> Result<(), String> {
+async fn list(api: GlowmarktApi) -> Result<(), String> {
     let devices = api.devices().await.str_err()?;
-
-    match format {
-        Format::Json => println!("{}", to_string_pretty(&devices).str_err()?),
-        Format::Text => {}
-    }
-
+    println!("{}", to_string_pretty(&devices).str_err()?);
     Ok(())
 }
 
 async fn readings(
     api: GlowmarktApi,
-    format: Format,
     resource: String,
     start: String,
     end: Option<String>,
-    period: Period,
 ) -> Result<(), String> {
     let start = OffsetDateTime::parse(&start, &Iso8601::DEFAULT).str_err()?;
     let end = if let Some(end) = end {
@@ -103,15 +67,18 @@ async fn readings(
     };
 
     let readings = api
-        .readings(&resource, start, end, period.into())
+        .readings(&resource, start, end, ReadingPeriod::HalfHour)
         .await
         .str_err()?;
 
-    match format {
-        Format::Json => println!("{}", to_string_pretty(&readings).str_err()?),
-        Format::Text => {}
-    }
+    println!("{}", to_string_pretty(&readings).str_err()?);
+    Ok(())
+}
 
+async fn resource(api: GlowmarktApi, resource: String) -> Result<(), String> {
+    let readings = api.resource(&resource).await.str_err()?;
+
+    println!("{}", to_string_pretty(&readings).str_err()?);
     Ok(())
 }
 
@@ -130,12 +97,12 @@ async fn main() -> Result<(), String> {
     };
 
     match args.command {
-        Command::List => list(api, args.format).await,
+        Command::List => list(api).await,
+        Command::Resource { resource_id } => resource(api, resource_id).await,
         Command::Readings {
-            resource,
+            resource_id,
             from,
             to,
-            period,
-        } => readings(api, args.format, resource, from, to, period).await,
+        } => readings(api, resource_id, from, to).await,
     }
 }

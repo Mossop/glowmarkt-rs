@@ -35,31 +35,6 @@ pub enum ReadingPeriod {
     // Year,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(from = "String")]
-pub enum ResourceClass {
-    Unknown,
-    ElectricityUsage,
-    ElectricityCost,
-    GasUsage,
-    GasCost,
-}
-
-impl From<String> for ResourceClass {
-    fn from(str: String) -> ResourceClass {
-        match str.as_str() {
-            "electricity.consumption" => ResourceClass::ElectricityUsage,
-            "electricity.consumption.cost" => ResourceClass::ElectricityCost,
-            "gas.consumption" => ResourceClass::GasUsage,
-            "gas.consumption.cost" => ResourceClass::GasCost,
-            _ => {
-                log::warn!("Unknown resource classifier: {}", str);
-                ResourceClass::Unknown
-            }
-        }
-    }
-}
-
 #[derive(Serialize, Debug)]
 pub struct AuthRequest {
     pub username: String,
@@ -88,11 +63,11 @@ pub struct ResourceInfo {
 pub struct VirtualEntity {
     #[serde(rename(deserialize = "veId"))]
     pub id: String,
+    pub name: String,
+    pub active: bool,
     #[serde(rename(deserialize = "veTypeId"))]
     pub type_id: String,
     pub owner_id: String,
-    pub name: String,
-    pub active: bool,
     pub resources: Vec<ResourceInfo>,
 }
 
@@ -109,10 +84,10 @@ pub struct Device {
     #[serde(rename(deserialize = "deviceId"))]
     pub id: String,
     pub description: String,
+    pub active: bool,
     pub hardware_id: String,
     pub device_type_id: String,
     pub hardware_ids: HashMap<String, String>,
-    pub active: bool,
     pub protocol: DeviceProtocol,
 }
 
@@ -121,13 +96,14 @@ pub struct Device {
 pub struct Resource {
     #[serde(rename(deserialize = "resourceId"))]
     pub id: String,
+    pub name: String,
+    pub description: String,
+    pub active: bool,
     #[serde(rename(deserialize = "resourceTypeId"))]
     pub type_id: String,
     pub owner_id: String,
-    pub name: String,
     #[serde(rename(deserialize = "classifier"))]
-    pub class: ResourceClass,
-    pub description: String,
+    pub class: String,
     pub base_unit: String,
 }
 
@@ -318,6 +294,13 @@ impl GlowmarktApi {
 
     pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntity, Error> {
         self.get_request(format!("virtualentity/{}", entity_id))
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+    }
+
+    pub async fn resource(&self, resource_id: &str) -> Result<Resource, Error> {
+        self.get_request(format!("resource/{}", resource_id))
             .request()
             .await
             .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
