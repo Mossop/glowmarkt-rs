@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use reqwest::{Client, Request, RequestBuilder};
+use reqwest::{Client, RequestBuilder};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use time::{Duration, OffsetDateTime, UtcOffset};
 
@@ -76,11 +76,12 @@ pub struct AuthResponse {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct VirtualEntityBase {
+pub struct VirtualEntity {
     #[serde(rename(deserialize = "veId"))]
     pub id: String,
     #[serde(rename(deserialize = "veTypeId"))]
     pub type_id: String,
+    pub owner_id: String,
     pub name: String,
 }
 
@@ -91,6 +92,7 @@ pub struct ResourceDetail {
     pub id: String,
     #[serde(rename(deserialize = "resourceTypeId"))]
     pub type_id: String,
+    pub owner_id: String,
     pub name: String,
     #[serde(rename(deserialize = "classifier"))]
     pub class: ResourceClass,
@@ -105,6 +107,7 @@ pub struct VirtualEntityDetail {
     pub id: String,
     #[serde(rename(deserialize = "veTypeId"))]
     pub type_id: String,
+    pub owner_id: String,
     pub name: String,
     pub resources: Vec<ResourceDetail>,
 }
@@ -126,28 +129,10 @@ pub struct ReadingsResponse {
     pub data: Vec<ReadingTuple>,
 }
 
-async fn api_call<T>(client: &Client, request: Request) -> Result<T, Error>
-where
-    T: DeserializeOwned,
-{
-    log::trace!("Sending {} request to {}", request.method(), request.url());
-    let response = client.execute(request).await?;
-
-    if !response.status().is_success() {
-        return Error::err(format!(
-            "API returned unexpected response: {}",
-            response.status()
-        ));
-    }
-
-    response.json::<T>().await.map_err(|e| e.to_string().into())
-}
-
 #[derive(Debug, Clone)]
 pub struct GlowmarktEndpoint {
     pub base_url: String,
     pub app_id: String,
-    client: Client,
 }
 
 impl Default for GlowmarktEndpoint {
@@ -155,7 +140,6 @@ impl Default for GlowmarktEndpoint {
         Self {
             base_url: BASE_URL.to_string(),
             app_id: APPLICATION_ID.to_string(),
-            client: Client::new(),
         }
     }
 }
@@ -165,14 +149,16 @@ impl GlowmarktEndpoint {
         self,
         username: String,
         password: String,
-    ) -> Result<crate::Glowmarkt, Error> {
-        let response: AuthResponse = api_call(
-            &self.client,
-            self.post_request("auth", &AuthRequest { username, password })
-                .build()?,
-        )
-        .await
-        .map_err(|e| format!("Error authenticating: {}", e))?;
+    ) -> Result<GlowmarktApi, Error> {
+        let client = Client::new();
+        let request = client
+            .post(self.url("auth"))
+            .json(&AuthRequest { username, password });
+
+        let response: AuthResponse = self
+            .api_call(&client, request)
+            .await
+            .map_err(|e| format!("Error authenticating: {}", e))?;
 
         if !response.valid {
             return Error::err("Authentication error");
@@ -180,58 +166,136 @@ impl GlowmarktEndpoint {
 
         log::trace!("Authenticated with API until {}", iso(response.expiry));
 
-        Ok(crate::Glowmarkt {
-            endpoint: self,
+        Ok(GlowmarktApi {
             token: response.token,
+            endpoint: self,
+            client,
         })
     }
 
-    pub(crate) fn get_request<S: Display>(&self, path: S) -> RequestBuilder {
-        self.client
-            .get(format!("{}/{}", self.base_url, path))
-            .header("applicationId", &self.app_id)
+    fn url<S: Display>(&self, path: S) -> String {
+        format!("{}/{}", self.base_url, path)
     }
 
-    pub(crate) fn post_request<T: Serialize>(&self, path: &str, data: &T) -> RequestBuilder {
-        self.client
-            .post(format!("{}/{}", self.base_url, path))
+    async fn api_call<T>(&self, client: &Client, request: RequestBuilder) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let request = request
             .header("applicationId", &self.app_id)
             .header("Content-Type", "application/json")
-            .json(data)
+            .build()?;
+
+        log::trace!("Sending {} request to {}", request.method(), request.url());
+        let response = client.execute(request).await?;
+
+        if !response.status().is_success() {
+            log::error!("API returned error: {}", response.status());
+            return Error::err(format!(
+                "API returned unexpected response: {}",
+                response.status()
+            ));
+        }
+
+        response.json::<T>().await.map_err(|e| e.to_string().into())
+    }
+}
+
+struct ApiRequest<'a> {
+    endpoint: &'a GlowmarktEndpoint,
+    client: &'a Client,
+    request: RequestBuilder,
+}
+
+impl<'a> ApiRequest<'a> {
+    async fn request<T: DeserializeOwned>(self) -> Result<T, Error> {
+        self.endpoint.api_call(self.client, self.request).await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GlowmarktApi {
+    pub token: String,
+    endpoint: GlowmarktEndpoint,
+    client: Client,
+}
+
+impl GlowmarktApi {
+    pub async fn authenticate(username: String, password: String) -> Result<GlowmarktApi, Error> {
+        GlowmarktEndpoint::default()
+            .authenticate(username, password)
+            .await
     }
 
-    pub(crate) async fn virtual_entities(
-        &self,
-        token: &str,
-    ) -> Result<Vec<VirtualEntityBase>, Error> {
-        api_call(
-            &self.client,
-            self.get_request("virtualentity")
-                .header("token", token)
-                .build()?,
-        )
-        .await
-        .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+    fn get_request<S>(&self, path: S) -> ApiRequest
+    where
+        S: Display,
+    {
+        let request = self
+            .client
+            .get(self.endpoint.url(path))
+            .header("token", &self.token);
+
+        ApiRequest {
+            endpoint: &self.endpoint,
+            client: &self.client,
+            request,
+        }
     }
 
-    pub(crate) async fn virtual_entity(
-        &self,
-        token: &str,
-        entity_id: &str,
-    ) -> Result<VirtualEntityDetail, Error> {
-        api_call(
-            &self.client,
-            self.get_request(format!("virtualentity/{}/resources", entity_id))
-                .header("token", token)
-                .build()?,
-        )
-        .await
-        .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+    fn query_request<S, T>(&self, path: S, query: &T) -> ApiRequest
+    where
+        S: Display,
+        T: Serialize + ?Sized,
+    {
+        let request = self
+            .client
+            .get(self.endpoint.url(path))
+            .header("token", &self.token)
+            .query(query);
+
+        ApiRequest {
+            endpoint: &self.endpoint,
+            client: &self.client,
+            request,
+        }
     }
 
-    pub(crate) async fn readings(
+    // fn post_request<S, T>(&self, path: S, data: &T) -> ApiRequest
+    // where
+    //     S: Display,
+    //     T: Serialize,
+    // {
+    //     let request = self
+    //         .client
+    //         .post(self.endpoint.url(path))
+    //         .header("Content-Type", "application/json")
+    //         .header("token", &self.token)
+    //         .json(data);
+
+    //     ApiRequest {
+    //         endpoint: &self.endpoint,
+    //         client: &self.client,
+    //         request,
+    //     }
+    // }
+
+    pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
+        self.get_request("virtualentity")
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+    }
+
+    pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntityDetail, Error> {
+        self.get_request(format!("virtualentity/{}/resources", entity_id))
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+    }
+
+    pub async fn readings(
         &self,
-        token: &str,
         resource_id: &str,
         start: OffsetDateTime,
         end: OffsetDateTime,
@@ -246,21 +310,20 @@ impl GlowmarktEndpoint {
             // ReadingPeriod::Year => "P1Y".to_string(),
         };
 
-        let readings = api_call::<ReadingsResponse>(
-            &self.client,
-            self.get_request(format!("resource/{}/readings", resource_id))
-                .query(&[
+        let readings = self
+            .query_request(
+                format!("resource/{}/readings", resource_id),
+                &[
                     ("from", iso(start.to_offset(UtcOffset::UTC))),
                     ("to", iso(end.to_offset(UtcOffset::UTC))),
                     ("period", period_arg),
                     ("offset", 0.to_string()),
                     ("function", "sum".to_string()),
-                ])
-                .header("token", token)
-                .build()?,
-        )
-        .await
-        .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
+                ],
+            )
+            .request::<ReadingsResponse>()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
 
         log::trace!("Received readings {:?}", readings.data);
 

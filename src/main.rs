@@ -8,7 +8,9 @@ use time::{format_description::well_known::Iso8601, OffsetDateTime};
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Format {
+    /// A plain text format for humans to read.
     Text,
+    /// JSON for processing by other tools.
     Json,
 }
 
