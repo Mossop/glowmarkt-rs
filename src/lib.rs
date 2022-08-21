@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 pub mod api;
 mod error;
 
-pub use api::{Reading, ReadingPeriod, VirtualEntityDetail};
+pub use api::{Device, Reading, ReadingPeriod, VirtualEntity};
 pub use error::Error;
 
 #[derive(Debug, Clone)]
@@ -18,17 +18,12 @@ impl Glowmarkt {
         Ok(Glowmarkt { api })
     }
 
-    pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntityDetail>, Error> {
-        let response = self.api.virtual_entities().await?;
-        let mut entities = Vec::new();
+    pub async fn devices(&self) -> Result<Vec<Device>, Error> {
+        self.api.devices().await
+    }
 
-        for entity in response {
-            let entity = self.api.virtual_entity(&entity.id).await?;
-            entities.push(entity);
-        }
-
-        log::trace!("Saw entities: {:?}", entities);
-        Ok(entities)
+    pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
+        self.api.virtual_entities().await
     }
 
     pub async fn readings(

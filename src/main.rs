@@ -77,17 +77,11 @@ impl<V, D: Display> ErrorStr<V> for Result<V, D> {
 }
 
 async fn list(api: Glowmarkt, format: Format) -> Result<(), String> {
-    let entities = api.virtual_entities().await.str_err()?;
+    let devices = api.devices().await.str_err()?;
 
     match format {
-        Format::Json => println!("{}", to_string_pretty(&entities).str_err()?),
-        Format::Text => {
-            for entity in entities {
-                for resource in entity.resources {
-                    println!("{} {} ({})", resource.id, resource.name, resource.base_unit);
-                }
-            }
-        }
+        Format::Json => println!("{}", to_string_pretty(&devices).str_err()?),
+        Format::Text => {}
     }
 
     Ok(())

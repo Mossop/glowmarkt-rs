@@ -19,6 +19,12 @@ impl Display for Error {
     }
 }
 
+impl From<Error> for String {
+    fn from(error: Error) -> String {
+        error.message
+    }
+}
+
 impl From<String> for Error {
     fn from(message: String) -> Error {
         Error { message }
@@ -33,14 +39,14 @@ impl From<&str> for Error {
     }
 }
 
-impl From<Error> for String {
-    fn from(error: Error) -> String {
-        error.message
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        error.to_string().into()
     }
 }
 
-impl From<reqwest::Error> for Error {
-    fn from(error: reqwest::Error) -> Self {
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
         error.to_string().into()
     }
 }

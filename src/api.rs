@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use reqwest::{Client, RequestBuilder};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -74,7 +74,14 @@ pub struct AuthResponse {
     pub expiry: OffsetDateTime,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceInfo {
+    pub resource_id: String,
+    pub resource_type_id: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct VirtualEntity {
     #[serde(rename(deserialize = "veId"))]
@@ -83,11 +90,33 @@ pub struct VirtualEntity {
     pub type_id: String,
     pub owner_id: String,
     pub name: String,
+    pub active: bool,
+    pub resources: Vec<ResourceInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct ResourceDetail {
+pub struct DeviceProtocol {
+    pub protocol: String,
+    pub sensors: Vec<ResourceInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    #[serde(rename(deserialize = "deviceId"))]
+    pub id: String,
+    pub description: String,
+    pub hardware_id: String,
+    pub device_type_id: String,
+    pub hardware_ids: HashMap<String, String>,
+    pub active: bool,
+    pub protocol: DeviceProtocol,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Resource {
     #[serde(rename(deserialize = "resourceId"))]
     pub id: String,
     #[serde(rename(deserialize = "resourceTypeId"))]
@@ -98,18 +127,6 @@ pub struct ResourceDetail {
     pub class: ResourceClass,
     pub description: String,
     pub base_unit: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct VirtualEntityDetail {
-    #[serde(rename(deserialize = "veId"))]
-    pub id: String,
-    #[serde(rename(deserialize = "veTypeId"))]
-    pub type_id: String,
-    pub owner_id: String,
-    pub name: String,
-    pub resources: Vec<ResourceDetail>,
 }
 
 type ReadingTuple = (i64, f32);
@@ -164,7 +181,7 @@ impl GlowmarktEndpoint {
             return Error::err("Authentication error");
         }
 
-        log::trace!("Authenticated with API until {}", iso(response.expiry));
+        log::debug!("Authenticated with API until {}", iso(response.expiry));
 
         Ok(GlowmarktApi {
             token: response.token,
@@ -186,7 +203,7 @@ impl GlowmarktEndpoint {
             .header("Content-Type", "application/json")
             .build()?;
 
-        log::trace!("Sending {} request to {}", request.method(), request.url());
+        log::debug!("Sending {} request to {}", request.method(), request.url());
         let response = client.execute(request).await?;
 
         if !response.status().is_success() {
@@ -197,7 +214,10 @@ impl GlowmarktEndpoint {
             ));
         }
 
-        response.json::<T>().await.map_err(|e| e.to_string().into())
+        let result = response.text().await?;
+        log::trace!("Received: {}", result);
+
+        Ok(serde_json::from_str::<T>(&result)?)
     }
 }
 
@@ -280,6 +300,13 @@ impl GlowmarktApi {
     //     }
     // }
 
+    pub async fn devices(&self) -> Result<Vec<Device>, Error> {
+        self.get_request("device")
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing devices: {}", e)))
+    }
+
     pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
         self.get_request("virtualentity")
             .request()
@@ -287,8 +314,8 @@ impl GlowmarktApi {
             .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
     }
 
-    pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntityDetail, Error> {
-        self.get_request(format!("virtualentity/{}/resources", entity_id))
+    pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntity, Error> {
+        self.get_request(format!("virtualentity/{}", entity_id))
             .request()
             .await
             .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
@@ -324,8 +351,6 @@ impl GlowmarktApi {
             .request::<ReadingsResponse>()
             .await
             .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
-
-        log::trace!("Received readings {:?}", readings.data);
 
         Ok(readings
             .data
