@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use flexi_logger::Logger;
-use glowmarkt::{Glowmarkt, ReadingPeriod};
+use glowmarkt::{GlowmarktApi, ReadingPeriod};
 use serde_json::to_string_pretty;
 use time::{format_description::well_known::Iso8601, OffsetDateTime};
 
@@ -76,7 +76,7 @@ impl<V, D: Display> ErrorStr<V> for Result<V, D> {
     }
 }
 
-async fn list(api: Glowmarkt, format: Format) -> Result<(), String> {
+async fn list(api: GlowmarktApi, format: Format) -> Result<(), String> {
     let devices = api.devices().await.str_err()?;
 
     match format {
@@ -88,7 +88,7 @@ async fn list(api: Glowmarkt, format: Format) -> Result<(), String> {
 }
 
 async fn readings(
-    api: Glowmarkt,
+    api: GlowmarktApi,
     format: Format,
     resource: String,
     start: String,
@@ -124,7 +124,7 @@ async fn main() -> Result<(), String> {
     let args = Args::parse();
 
     let api = if let (Some(username), Some(password)) = (args.username, args.password) {
-        Glowmarkt::authenticate(username, password).await?
+        GlowmarktApi::authenticate(username, password).await?
     } else {
         return Err("Must pass username and password.".to_string());
     };
