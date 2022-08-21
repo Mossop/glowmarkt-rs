@@ -20,8 +20,17 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Lists meters
-    List,
+    /// Lists devices
+    Devices,
+    /// Lists device types
+    DeviceTypes,
+    /// Lists resource types
+    ResourceTypes,
+    /// Displays details for a resource
+    Resource {
+        /// The resource to display.
+        resource_id: String,
+    },
     /// Lists meter readings
     Readings {
         /// The resource to read.
@@ -30,10 +39,6 @@ enum Command {
         from: String,
         /// Start time of last reading (defaults to now).
         to: Option<String>,
-    },
-    Resource {
-        /// The resource to display.
-        resource_id: String,
     },
 }
 
@@ -47,9 +52,21 @@ impl<V, D: Display> ErrorStr<V> for Result<V, D> {
     }
 }
 
-async fn list(api: GlowmarktApi) -> Result<(), String> {
+async fn devices(api: GlowmarktApi) -> Result<(), String> {
     let devices = api.devices().await.str_err()?;
     println!("{}", to_string_pretty(&devices).str_err()?);
+    Ok(())
+}
+
+async fn device_types(api: GlowmarktApi) -> Result<(), String> {
+    let types = api.device_types().await.str_err()?;
+    println!("{}", to_string_pretty(&types).str_err()?);
+    Ok(())
+}
+
+async fn resource_types(api: GlowmarktApi) -> Result<(), String> {
+    let types = api.resource_types().await.str_err()?;
+    println!("{}", to_string_pretty(&types).str_err()?);
     Ok(())
 }
 
@@ -97,7 +114,9 @@ async fn main() -> Result<(), String> {
     };
 
     match args.command {
-        Command::List => list(api).await,
+        Command::Devices => devices(api).await,
+        Command::DeviceTypes => device_types(api).await,
+        Command::ResourceTypes => resource_types(api).await,
         Command::Resource { resource_id } => resource(api, resource_id).await,
         Command::Readings {
             resource_id,

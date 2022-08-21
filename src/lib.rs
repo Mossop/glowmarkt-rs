@@ -1,7 +1,13 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
 use reqwest::{Client, RequestBuilder};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{
+    de::{self, DeserializeOwned, MapAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
 use time::{Duration, OffsetDateTime, UtcOffset};
 
 mod error;
@@ -52,14 +58,14 @@ pub struct AuthResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceInfo {
     pub resource_id: String,
     pub resource_type_id: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VirtualEntity {
     #[serde(rename(deserialize = "veId"))]
     pub id: String,
@@ -72,42 +78,211 @@ pub struct VirtualEntity {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceProtocol {
-    pub protocol: String,
-    pub sensors: Vec<ResourceInfo>,
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Sensor {
+    pub protocol_id: String,
+    pub resource_type_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Protocol {
+    pub protocol: String,
+    pub sensors: Vec<Sensor>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceType {
+    #[serde(rename(deserialize = "deviceTypeId"))]
+    pub id: String,
+    pub description: Option<String>,
+    pub active: bool,
+    pub protocol: Protocol,
+    #[serde(default)]
+    pub configuration: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceSensor {
+    pub protocol_id: String,
+    pub resource_id: String,
+    pub resource_type_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceProtocol {
+    pub protocol: String,
+    pub sensors: Vec<DeviceSensor>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Device {
     #[serde(rename(deserialize = "deviceId"))]
     pub id: String,
-    pub description: String,
+    pub description: Option<String>,
     pub active: bool,
     pub hardware_id: String,
     pub device_type_id: String,
+    pub owner_id: String,
+    pub hardware_id_names: Vec<String>,
     pub hardware_ids: HashMap<String, String>,
+    pub parent_hardware_id: Vec<String>,
+    pub tags: Vec<String>,
     pub protocol: DeviceProtocol,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DataSourceResourceTypeInfo {
+    #[serde(rename = "type")]
+    pub data_type: Option<String>,
+    pub unit: Option<String>,
+    pub range: Option<String>,
+    pub is_cost: Option<bool>,
+    pub method: Option<String>,
+}
+
+impl From<String> for DataSourceResourceTypeInfo {
+    fn from(val: String) -> DataSourceResourceTypeInfo {
+        DataSourceResourceTypeInfo {
+            data_type: Some(val),
+            unit: None,
+            range: None,
+            is_cost: None,
+            method: None,
+        }
+    }
+}
+
+fn ds_type_info_deserializer<'de, D>(
+    deserializer: D,
+) -> Result<Option<DataSourceResourceTypeInfo>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // This is a Visitor that forwards string types to T's `FromStr` impl and
+    // forwards map types to T's `Deserialize` impl. The `PhantomData` is to
+    // keep the compiler from complaining about T being an unused generic type
+    // parameter. We need T in order to know the Value type for the Visitor
+    // impl.
+    struct StringOrStruct;
+
+    impl<'de> Visitor<'de> for StringOrStruct {
+        type Value = Option<DataSourceResourceTypeInfo>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("string or object")
+        }
+
+        fn visit_none<E>(self) -> Result<Option<DataSourceResourceTypeInfo>, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Option<DataSourceResourceTypeInfo>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_owned().into()))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Option<DataSourceResourceTypeInfo>, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.into()))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Option<DataSourceResourceTypeInfo>, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            // `MapAccessDeserializer` is a wrapper that turns a `MapAccess`
+            // into a `Deserializer`, allowing it to be used as the input to T's
+            // `Deserialize` implementation. T then deserializes itself using
+            // the entries from the map visitor.
+            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map)).map(Some)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrStruct)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Field {
+    pub field_name: String,
+    pub datatype: String,
+    pub negative: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Storage {
+    #[serde(rename = "type")]
+    pub storage_type: String,
+    pub sampling: String,
+    #[serde(default)]
+    pub start: serde_json::Value,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResourceType {
+    #[serde(rename(deserialize = "resourceTypeId"))]
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub label: Option<String>,
+    pub active: bool,
+    pub classifier: Option<String>,
+    pub base_unit: Option<String>,
+    pub data_source_type: String,
+    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
+    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
+    #[serde(default)]
+    pub units: HashMap<String, String>,
+    pub storage: Vec<Storage>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Resource {
     #[serde(rename(deserialize = "resourceId"))]
     pub id: String,
     pub name: String,
-    pub description: String,
+    pub description: Option<String>,
+    pub label: Option<String>,
     pub active: bool,
     #[serde(rename(deserialize = "resourceTypeId"))]
     pub type_id: String,
     pub owner_id: String,
-    #[serde(rename(deserialize = "classifier"))]
-    pub class: String,
-    pub base_unit: String,
+    pub classifier: Option<String>,
+    pub base_unit: Option<String>,
+    pub data_source_type: String,
+    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
+    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
+    pub data_source_unit_info: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
 }
-
-type ReadingTuple = (i64, f32);
 
 #[derive(Serialize, Debug)]
 pub struct Reading {
@@ -118,8 +293,10 @@ pub struct Reading {
     pub value: f32,
 }
 
+type ReadingTuple = (i64, f32);
+
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadingsResponse {
     pub data: Vec<ReadingTuple>,
 }
@@ -286,6 +463,14 @@ impl GlowmarktApi {
 
 /// [Device Management System](https://api.glowmarkt.com/api-docs/v0-1/dmssys/#/)
 impl GlowmarktApi {
+    /// Retrieves all of the known device types.
+    pub async fn device_types(&self) -> Result<Vec<DeviceType>, Error> {
+        self.get_request("devicetype")
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing device types: {}", e)))
+    }
+
     /// Retrieves all of the devices registered for an account.
     pub async fn devices(&self) -> Result<Vec<Device>, Error> {
         self.get_request("device")
@@ -310,18 +495,26 @@ impl GlowmarktApi {
         self.get_request(format!("virtualentity/{}", entity_id))
             .request()
             .await
-            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+            .map_err(|e| Error::from(format!("Error accessing virtual entity: {}", e)))
     }
 }
 
 /// [Resource System](https://api.glowmarkt.com/api-docs/v0-1/resourcesys/#/)
 impl GlowmarktApi {
+    /// Retrieves all of the known resource types.
+    pub async fn resource_types(&self) -> Result<Vec<ResourceType>, Error> {
+        self.get_request("resourcetype")
+            .request()
+            .await
+            .map_err(|e| Error::from(format!("Error accessing resource types: {}", e)))
+    }
+
     /// Retrieves a single resource by ID.
     pub async fn resource(&self, resource_id: &str) -> Result<Resource, Error> {
         self.get_request(format!("resource/{}", resource_id))
             .request()
             .await
-            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
+            .map_err(|e| Error::from(format!("Error accessing resource: {}", e)))
     }
 
     pub async fn readings(
