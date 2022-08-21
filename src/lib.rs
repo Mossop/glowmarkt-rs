@@ -124,6 +124,9 @@ pub struct ReadingsResponse {
     pub data: Vec<ReadingTuple>,
 }
 
+/// The API endpoint.
+///
+/// Normally a non-default endpoint would only be useful for testing purposes.
 #[derive(Debug, Clone)]
 pub struct GlowmarktEndpoint {
     pub base_url: String,
@@ -140,6 +143,7 @@ impl Default for GlowmarktEndpoint {
 }
 
 impl GlowmarktEndpoint {
+    /// Authenticate against this endpoint.
     pub async fn authenticate(
         self,
         username: String,
@@ -219,6 +223,7 @@ pub struct GlowmarktApi {
 }
 
 impl GlowmarktApi {
+    /// Authenticates with the default Glowmarkt API endpoint.
     pub async fn authenticate(username: String, password: String) -> Result<GlowmarktApi, Error> {
         GlowmarktEndpoint::default()
             .authenticate(username, password)
@@ -277,14 +282,22 @@ impl GlowmarktApi {
     //         request,
     //     }
     // }
+}
 
+/// [Device Management System](https://api.glowmarkt.com/api-docs/v0-1/dmssys/#/)
+impl GlowmarktApi {
+    /// Retrieves all of the devices registered for an account.
     pub async fn devices(&self) -> Result<Vec<Device>, Error> {
         self.get_request("device")
             .request()
             .await
             .map_err(|e| Error::from(format!("Error accessing devices: {}", e)))
     }
+}
 
+/// [Virtual Entity System](https://api.glowmarkt.com/api-docs/v0-1/vesys/#/)
+impl GlowmarktApi {
+    /// Retrieves all of the virtual entities registered for an account.
     pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
         self.get_request("virtualentity")
             .request()
@@ -292,13 +305,18 @@ impl GlowmarktApi {
             .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
     }
 
+    /// Retrieves a single virtual entity by ID.
     pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntity, Error> {
         self.get_request(format!("virtualentity/{}", entity_id))
             .request()
             .await
             .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
     }
+}
 
+/// [Resource System](https://api.glowmarkt.com/api-docs/v0-1/resourcesys/#/)
+impl GlowmarktApi {
+    /// Retrieves a single resource by ID.
     pub async fn resource(&self, resource_id: &str) -> Result<Resource, Error> {
         self.get_request(format!("resource/{}", resource_id))
             .request()
