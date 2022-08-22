@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use clap::{Parser, Subcommand};
 use flexi_logger::Logger;
-use glowmarkt::{Device, Error, GlowmarktApi, ReadingPeriod, Resource};
+use glowmarkt::{Device, Error, ErrorKind, GlowmarktApi, ReadingPeriod, Resource};
 use influx::Measurement;
 use serde::Serialize;
 use serde_json::to_string_pretty;
@@ -19,6 +19,8 @@ struct Args {
     pub username: Option<String>,
     #[clap(short, long, env)]
     pub password: Option<String>,
+    #[clap(short, long, env)]
+    pub token: Option<String>,
 
     #[clap(subcommand)]
     command: Command,
@@ -26,6 +28,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Generates a valid authentication token.
+    Token,
     /// Lists devices.
     Device {
         /// The specific device to display.
@@ -85,7 +89,7 @@ trait ErrorStr<V> {
 
 impl<V, D: Display> ErrorStr<V> for Result<V, D> {
     fn str_err(self) -> Result<V, String> {
-        self.map_err(|e| format!("Error: {}", e))
+        self.map_err(|e| e.to_string())
     }
 }
 
@@ -188,6 +192,31 @@ async fn influx(
     Ok(())
 }
 
+async fn login(args: &Args) -> Result<GlowmarktApi, String> {
+    if let Some(ref token) = args.token {
+        let api = GlowmarktApi::new(token);
+
+        match api.validate().await {
+            Ok(_) => {
+                return Ok(api);
+            }
+            Err(e) => {
+                if e.kind != ErrorKind::NotAuthenticated {
+                    return Err(e.to_string());
+                }
+            }
+        }
+    }
+
+    if let (Some(username), Some(password)) = (&args.username, &args.password) {
+        GlowmarktApi::authenticate(username, password)
+            .await
+            .str_err()
+    } else {
+        Err("Must pass username and password.".to_string())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), String> {
     if let Err(e) = Logger::try_with_env_or_str("info").and_then(|logger| logger.start()) {
@@ -196,13 +225,13 @@ async fn main() -> Result<(), String> {
 
     let args = Args::parse();
 
-    let api = if let (Some(username), Some(password)) = (args.username, args.password) {
-        GlowmarktApi::authenticate(username, password).await?
-    } else {
-        return Err("Must pass username and password.".to_string());
-    };
+    let api = login(&args).await?;
 
     match args.command {
+        Command::Token => {
+            println!("{}", api.token);
+            Ok(())
+        }
         Command::Device { id } => display_result(api.devices().await, id),
         Command::DeviceType { id } => display_result(api.device_types().await, id),
         Command::ResourceType { id } => display_result(api.resource_types().await, id),

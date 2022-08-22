@@ -32,13 +32,13 @@ pub(crate) fn maybe<T>(result: Result<T, Error>) -> Result<Option<T>, Error> {
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad(&self.message)
+        f.pad(&format!("{:?}: {}", self.kind, self.message))
     }
 }
 
 impl From<Error> for String {
     fn from(error: Error) -> String {
-        error.message
+        format!("{}", error)
     }
 }
 
@@ -47,6 +47,8 @@ impl From<reqwest::Error> for Error {
         let kind = if let Some(status) = error.status() {
             if status == StatusCode::NOT_FOUND {
                 ErrorKind::NotFound
+            } else if status == StatusCode::UNAUTHORIZED {
+                ErrorKind::NotAuthenticated
             } else if status.is_server_error() {
                 ErrorKind::Server
             } else {

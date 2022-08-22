@@ -53,19 +53,100 @@ pub enum ReadingPeriod {
 }
 
 #[derive(Serialize, Debug)]
-pub struct AuthRequest {
+struct AuthRequest {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthResponse {
+struct ErrorResponse {
+    pub message: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InvalidAuthResponse {
+    pub error: ErrorResponse,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ValidAuthResponse {
     pub valid: bool,
-    pub account_id: String,
     pub token: String,
     #[serde(rename = "exp", with = "time::serde::timestamp")]
     pub expiry: OffsetDateTime,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum AuthResponse {
+    Invalid(InvalidAuthResponse),
+    Valid(ValidAuthResponse),
+}
+
+impl AuthResponse {
+    pub fn validate(self) -> Result<ValidAuthResponse, Error> {
+        match self {
+            AuthResponse::Valid(response) => {
+                if response.valid {
+                    Ok(response)
+                } else {
+                    Err(Error {
+                        kind: ErrorKind::NotAuthenticated,
+                        message: "Authentication error".to_string(),
+                    })
+                }
+            }
+            AuthResponse::Invalid(response) => Err(Error {
+                kind: ErrorKind::NotAuthenticated,
+                message: response.error.message,
+            }),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct InvalidValidateResponse {
+    pub error: ErrorResponse,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct ValidValidateResponse {
+    pub valid: bool,
+    #[serde(rename = "exp", with = "time::serde::timestamp")]
+    pub expiry: OffsetDateTime,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum ValidateResponse {
+    Invalid(InvalidValidateResponse),
+    Valid(ValidValidateResponse),
+}
+
+impl ValidateResponse {
+    pub fn validate(self) -> Result<ValidValidateResponse, Error> {
+        match self {
+            ValidateResponse::Valid(response) => {
+                if response.valid {
+                    Ok(response)
+                } else {
+                    Err(Error {
+                        kind: ErrorKind::NotAuthenticated,
+                        message: "Authentication error".to_string(),
+                    })
+                }
+            }
+            ValidateResponse::Invalid(response) => Err(Error {
+                kind: ErrorKind::NotAuthenticated,
+                message: response.error.message,
+            }),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -353,8 +434,16 @@ pub struct GlowmarktApi {
 }
 
 impl GlowmarktApi {
+    pub fn new(token: &str) -> Self {
+        Self {
+            token: token.to_owned(),
+            endpoint: Default::default(),
+            client: Client::new(),
+        }
+    }
+
     /// Authenticates with the default Glowmarkt API endpoint.
-    pub async fn authenticate(username: String, password: String) -> Result<GlowmarktApi, Error> {
+    pub async fn authenticate(username: &str, password: &str) -> Result<GlowmarktApi, Error> {
         Self::auth(Default::default(), username, password).await
     }
 
@@ -417,22 +506,19 @@ impl GlowmarktApi {
     /// Authenticate against an endpoint.
     pub async fn auth(
         endpoint: GlowmarktEndpoint,
-        username: String,
-        password: String,
+        username: &str,
+        password: &str,
     ) -> Result<GlowmarktApi, Error> {
         let client = Client::new();
-        let request = client
-            .post(endpoint.url("auth"))
-            .json(&AuthRequest { username, password });
+        let request = client.post(endpoint.url("auth")).json(&AuthRequest {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        });
 
-        let response: AuthResponse = endpoint.api_call(&client, request).await?;
-
-        if !response.valid {
-            return Err(Error {
-                kind: ErrorKind::NotAuthenticated,
-                message: "Authentication error".to_string(),
-            });
-        }
+        let response = endpoint
+            .api_call::<AuthResponse>(&client, request)
+            .await?
+            .validate()?;
 
         log::debug!("Authenticated with API until {}", iso(response.expiry));
 
@@ -441,6 +527,19 @@ impl GlowmarktApi {
             endpoint,
             client,
         })
+    }
+
+    /// Validates the current token.
+    pub async fn validate(&self) -> Result<bool, Error> {
+        let response = self
+            .get_request("auth")
+            .request::<ValidateResponse>()
+            .await
+            .and_then(|r| r.validate())?;
+
+        log::debug!("Authenticated with API until {}", iso(response.expiry));
+
+        Ok(true)
     }
 }
 
