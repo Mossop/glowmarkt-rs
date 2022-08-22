@@ -1,15 +1,32 @@
 use std::fmt::{self, Display};
 
+use reqwest::StatusCode;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    NotFound,
+    NotAuthenticated,
+    Network,
+    Client,
+    Server,
+    Response,
+}
+
 pub struct Error {
+    pub kind: ErrorKind,
     pub message: String,
 }
 
-impl Error {
-    pub(crate) fn err<O, M>(message: M) -> Result<O, Error>
-    where
-        M: Into<Error>,
-    {
-        Err(message.into())
+pub(crate) fn maybe<T>(result: Result<T, Error>) -> Result<Option<T>, Error> {
+    match result {
+        Ok(val) => Ok(Some(val)),
+        Err(e) => {
+            if e.kind == ErrorKind::NotFound {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
     }
 }
 
@@ -25,28 +42,32 @@ impl From<Error> for String {
     }
 }
 
-impl From<String> for Error {
-    fn from(message: String) -> Error {
-        Error { message }
-    }
-}
-
-impl From<&str> for Error {
-    fn from(message: &str) -> Error {
-        Error {
-            message: message.to_owned(),
-        }
-    }
-}
-
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Self {
-        error.to_string().into()
+        let kind = if let Some(status) = error.status() {
+            if status == StatusCode::NOT_FOUND {
+                ErrorKind::NotFound
+            } else if status.is_server_error() {
+                ErrorKind::Server
+            } else {
+                ErrorKind::Client
+            }
+        } else {
+            ErrorKind::Network
+        };
+
+        Self {
+            kind,
+            message: error.to_string(),
+        }
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
-        error.to_string().into()
+        Self {
+            kind: ErrorKind::Response,
+            message: error.to_string(),
+        }
     }
 }

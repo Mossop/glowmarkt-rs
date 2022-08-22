@@ -3,16 +3,17 @@ use std::{
     fmt::{self, Display},
 };
 
+use error::maybe;
 use reqwest::{Client, RequestBuilder};
 use serde::{
     de::{self, DeserializeOwned, MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
 };
-use time::{Duration, OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset};
 
-mod error;
+pub mod error;
 
-pub use error::Error;
+pub use error::{Error, ErrorKind};
 
 // Developed based on https://bitbucket.org/ijosh/brightglowmarkt/src/master/
 
@@ -31,14 +32,24 @@ fn iso(dt: OffsetDateTime) -> String {
     )
 }
 
+trait Identified {
+    fn id(&self) -> &str;
+}
+
+fn build_map<I: Identified>(list: Vec<I>) -> HashMap<String, I> {
+    list.into_iter()
+        .map(|v| (v.id().to_owned(), v))
+        .collect::<HashMap<String, I>>()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum ReadingPeriod {
     HalfHour,
     Hour,
     Day,
     Week,
-    // Month,
-    // Year,
+    Month,
+    Year,
 }
 
 #[derive(Serialize, Debug)]
@@ -58,14 +69,14 @@ pub struct AuthResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceInfo {
     pub resource_id: String,
     pub resource_type_id: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct VirtualEntity {
     #[serde(rename(deserialize = "veId"))]
     pub id: String,
@@ -77,22 +88,28 @@ pub struct VirtualEntity {
     pub resources: Vec<ResourceInfo>,
 }
 
+impl Identified for VirtualEntity {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Sensor {
     pub protocol_id: String,
     pub resource_type_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Protocol {
     pub protocol: String,
     pub sensors: Vec<Sensor>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceType {
     #[serde(rename(deserialize = "deviceTypeId"))]
     pub id: String,
@@ -107,8 +124,14 @@ pub struct DeviceType {
     pub created_at: OffsetDateTime,
 }
 
+impl Identified for DeviceType {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceSensor {
     pub protocol_id: String,
     pub resource_id: String,
@@ -116,14 +139,14 @@ pub struct DeviceSensor {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceProtocol {
     pub protocol: String,
     pub sensors: Vec<DeviceSensor>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Device {
     #[serde(rename(deserialize = "deviceId"))]
     pub id: String,
@@ -143,8 +166,14 @@ pub struct Device {
     pub created_at: OffsetDateTime,
 }
 
+impl Identified for Device {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct DataSourceResourceTypeInfo {
     #[serde(rename = "type")]
     pub data_type: Option<String>,
@@ -163,6 +192,380 @@ impl From<String> for DataSourceResourceTypeInfo {
             is_cost: None,
             method: None,
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Field {
+    pub field_name: String,
+    pub datatype: String,
+    pub negative: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Storage {
+    #[serde(rename = "type")]
+    pub storage_type: String,
+    pub sampling: String,
+    #[serde(default)]
+    pub start: serde_json::Value,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceType {
+    #[serde(rename(deserialize = "resourceTypeId"))]
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub label: Option<String>,
+    pub active: bool,
+    pub classifier: Option<String>,
+    pub base_unit: Option<String>,
+    pub data_source_type: String,
+    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
+    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
+    #[serde(default)]
+    pub units: HashMap<String, String>,
+    pub storage: Vec<Storage>,
+}
+
+impl Identified for ResourceType {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Resource {
+    #[serde(rename(deserialize = "resourceId"))]
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub label: Option<String>,
+    pub active: bool,
+    #[serde(rename(deserialize = "resourceTypeId"))]
+    pub type_id: String,
+    pub owner_id: String,
+    pub classifier: Option<String>,
+    pub base_unit: Option<String>,
+    pub data_source_type: String,
+    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
+    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
+    pub data_source_unit_info: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+impl Identified for Resource {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct Reading {
+    #[serde(with = "time::serde::rfc3339")]
+    pub start: OffsetDateTime,
+    pub value: f32,
+}
+
+type ReadingTuple = (i64, f32);
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingsResponse {
+    pub data: Vec<ReadingTuple>,
+}
+
+/// The API endpoint.
+///
+/// Normally a non-default endpoint would only be useful for testing purposes.
+#[derive(Debug, Clone)]
+pub struct GlowmarktEndpoint {
+    pub base_url: String,
+    pub app_id: String,
+}
+
+impl Default for GlowmarktEndpoint {
+    fn default() -> Self {
+        Self {
+            base_url: BASE_URL.to_string(),
+            app_id: APPLICATION_ID.to_string(),
+        }
+    }
+}
+
+impl GlowmarktEndpoint {
+    fn url<S: Display>(&self, path: S) -> String {
+        format!("{}/{}", self.base_url, path)
+    }
+
+    async fn api_call<T>(&self, client: &Client, request: RequestBuilder) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        let request = request
+            .header("applicationId", &self.app_id)
+            .header("Content-Type", "application/json")
+            .build()?;
+
+        log::debug!("Sending {} request to {}", request.method(), request.url());
+        let response = client
+            .execute(request)
+            .await?
+            .error_for_status()
+            .map_err(|e| {
+                log::warn!("Received API error: {}", e);
+                e
+            })?;
+
+        let result = response.text().await?;
+        log::trace!("Received: {}", result);
+
+        Ok(serde_json::from_str::<T>(&result)?)
+    }
+}
+
+struct ApiRequest<'a> {
+    endpoint: &'a GlowmarktEndpoint,
+    client: &'a Client,
+    request: RequestBuilder,
+}
+
+impl<'a> ApiRequest<'a> {
+    async fn request<T: DeserializeOwned>(self) -> Result<T, Error> {
+        self.endpoint.api_call(self.client, self.request).await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GlowmarktApi {
+    pub token: String,
+    endpoint: GlowmarktEndpoint,
+    client: Client,
+}
+
+impl GlowmarktApi {
+    /// Authenticates with the default Glowmarkt API endpoint.
+    pub async fn authenticate(username: String, password: String) -> Result<GlowmarktApi, Error> {
+        Self::auth(Default::default(), username, password).await
+    }
+
+    fn get_request<S>(&self, path: S) -> ApiRequest
+    where
+        S: Display,
+    {
+        let request = self
+            .client
+            .get(self.endpoint.url(path))
+            .header("token", &self.token);
+
+        ApiRequest {
+            endpoint: &self.endpoint,
+            client: &self.client,
+            request,
+        }
+    }
+
+    fn query_request<S, T>(&self, path: S, query: &T) -> ApiRequest
+    where
+        S: Display,
+        T: Serialize + ?Sized,
+    {
+        let request = self
+            .client
+            .get(self.endpoint.url(path))
+            .header("token", &self.token)
+            .query(query);
+
+        ApiRequest {
+            endpoint: &self.endpoint,
+            client: &self.client,
+            request,
+        }
+    }
+
+    // fn post_request<S, T>(&self, path: S, data: &T) -> ApiRequest
+    // where
+    //     S: Display,
+    //     T: Serialize,
+    // {
+    //     let request = self
+    //         .client
+    //         .post(self.endpoint.url(path))
+    //         .header("Content-Type", "application/json")
+    //         .header("token", &self.token)
+    //         .json(data);
+
+    //     ApiRequest {
+    //         endpoint: &self.endpoint,
+    //         client: &self.client,
+    //         request,
+    //     }
+    // }
+}
+
+/// [User System](https://api.glowmarkt.com/api-docs/v0-1/usersys/usertypes/)
+impl GlowmarktApi {
+    /// Authenticate against an endpoint.
+    pub async fn auth(
+        endpoint: GlowmarktEndpoint,
+        username: String,
+        password: String,
+    ) -> Result<GlowmarktApi, Error> {
+        let client = Client::new();
+        let request = client
+            .post(endpoint.url("auth"))
+            .json(&AuthRequest { username, password });
+
+        let response: AuthResponse = endpoint.api_call(&client, request).await?;
+
+        if !response.valid {
+            return Err(Error {
+                kind: ErrorKind::NotAuthenticated,
+                message: "Authentication error".to_string(),
+            });
+        }
+
+        log::debug!("Authenticated with API until {}", iso(response.expiry));
+
+        Ok(Self {
+            token: response.token,
+            endpoint,
+            client,
+        })
+    }
+}
+
+/// [Device Management System](https://api.glowmarkt.com/api-docs/v0-1/dmssys/#/)
+impl GlowmarktApi {
+    /// Retrieves all of the known device types.
+    pub async fn device_types(&self) -> Result<HashMap<String, DeviceType>, Error> {
+        self.get_request("devicetype")
+            .request()
+            .await
+            .map(build_map)
+    }
+
+    /// Retrieves all of the devices registered for an account.
+    pub async fn devices(&self) -> Result<HashMap<String, Device>, Error> {
+        self.get_request("device").request().await.map(build_map)
+    }
+
+    /// Retrieves a single device.
+    pub async fn device(&self, id: &str) -> Result<Option<Device>, Error> {
+        match self.get_request(format!("device/{}", id)).request().await {
+            Ok(device) => Ok(Some(device)),
+            Err(error) => {
+                if error.kind == ErrorKind::NotFound {
+                    Ok(None)
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
+/// [Virtual Entity System](https://api.glowmarkt.com/api-docs/v0-1/vesys/#/)
+impl GlowmarktApi {
+    /// Retrieves all of the virtual entities registered for an account.
+    pub async fn virtual_entities(&self) -> Result<HashMap<String, VirtualEntity>, Error> {
+        self.get_request("virtualentity")
+            .request()
+            .await
+            .map(build_map)
+    }
+
+    /// Retrieves a single virtual entity by ID.
+    pub async fn virtual_entity(&self, entity_id: &str) -> Result<Option<VirtualEntity>, Error> {
+        maybe(
+            self.get_request(format!("virtualentity/{}", entity_id))
+                .request()
+                .await,
+        )
+    }
+}
+
+/// [Resource System](https://api.glowmarkt.com/api-docs/v0-1/resourcesys/#/)
+impl GlowmarktApi {
+    /// Retrieves all of the known resource types.
+    pub async fn resource_types(&self) -> Result<HashMap<String, ResourceType>, Error> {
+        self.get_request("resourcetype")
+            .request()
+            .await
+            .map(build_map)
+    }
+
+    /// Retrieves all resources.
+    pub async fn resources(&self) -> Result<HashMap<String, Resource>, Error> {
+        self.get_request("resource").request().await.map(build_map)
+    }
+
+    /// Retrieves a single resource by ID.
+    pub async fn resource(&self, resource_id: &str) -> Result<Option<Resource>, Error> {
+        maybe(
+            self.get_request(format!("resource/{}", resource_id))
+                .request()
+                .await,
+        )
+    }
+
+    /// Retrieves the readings for a single resource.
+    ///
+    /// The API docs suggest that the start date should be set to the beginning
+    /// of the week (Monday) when the period is `Week` and the beginning of the
+    /// month when the period is `Month`. It is unclear what role the timezone
+    /// plays in this.
+    ///
+    /// The Glowmarkt API behaves strangely in the presence of non-UTC
+    /// timezones so `start` and `end` will first be converted to UTC and all
+    /// returned readings will be in UTC.
+    pub async fn readings(
+        &self,
+        resource_id: &str,
+        start: &OffsetDateTime,
+        end: &OffsetDateTime,
+        period: ReadingPeriod,
+    ) -> Result<Vec<Reading>, Error> {
+        let period_arg = match period {
+            ReadingPeriod::HalfHour => "PT30M".to_string(),
+            ReadingPeriod::Hour => "PT1H".to_string(),
+            ReadingPeriod::Day => "P1D".to_string(),
+            ReadingPeriod::Week => "P1W".to_string(),
+            ReadingPeriod::Month => "P1M".to_string(),
+            ReadingPeriod::Year => "P1Y".to_string(),
+        };
+
+        let readings = self
+            .query_request(
+                format!("resource/{}/readings", resource_id),
+                &[
+                    ("from", iso(start.to_offset(UtcOffset::UTC))),
+                    ("to", iso(end.to_offset(UtcOffset::UTC))),
+                    ("period", period_arg),
+                    ("offset", 0.to_string()),
+                    ("function", "sum".to_string()),
+                ],
+            )
+            .request::<ReadingsResponse>()
+            .await?;
+
+        Ok(readings
+            .data
+            .into_iter()
+            .map(|(timestamp, value)| Reading {
+                start: OffsetDateTime::from_unix_timestamp(timestamp).unwrap(),
+                value,
+            })
+            .collect())
     }
 }
 
@@ -220,349 +623,4 @@ where
     }
 
     deserializer.deserialize_any(StringOrStruct)
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Field {
-    pub field_name: String,
-    pub datatype: String,
-    pub negative: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Storage {
-    #[serde(rename = "type")]
-    pub storage_type: String,
-    pub sampling: String,
-    #[serde(default)]
-    pub start: serde_json::Value,
-    pub fields: Vec<Field>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResourceType {
-    #[serde(rename(deserialize = "resourceTypeId"))]
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub label: Option<String>,
-    pub active: bool,
-    pub classifier: Option<String>,
-    pub base_unit: Option<String>,
-    pub data_source_type: String,
-    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
-    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
-    #[serde(default)]
-    pub units: HashMap<String, String>,
-    pub storage: Vec<Storage>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Resource {
-    #[serde(rename(deserialize = "resourceId"))]
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub label: Option<String>,
-    pub active: bool,
-    #[serde(rename(deserialize = "resourceTypeId"))]
-    pub type_id: String,
-    pub owner_id: String,
-    pub classifier: Option<String>,
-    pub base_unit: Option<String>,
-    pub data_source_type: String,
-    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
-    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
-    pub data_source_unit_info: serde_json::Value,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-#[derive(Serialize, Debug)]
-pub struct Reading {
-    #[serde(with = "time::serde::rfc3339")]
-    pub start: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub end: OffsetDateTime,
-    pub value: f32,
-}
-
-type ReadingTuple = (i64, f32);
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ReadingsResponse {
-    pub data: Vec<ReadingTuple>,
-}
-
-/// The API endpoint.
-///
-/// Normally a non-default endpoint would only be useful for testing purposes.
-#[derive(Debug, Clone)]
-pub struct GlowmarktEndpoint {
-    pub base_url: String,
-    pub app_id: String,
-}
-
-impl Default for GlowmarktEndpoint {
-    fn default() -> Self {
-        Self {
-            base_url: BASE_URL.to_string(),
-            app_id: APPLICATION_ID.to_string(),
-        }
-    }
-}
-
-impl GlowmarktEndpoint {
-    /// Authenticate against this endpoint.
-    pub async fn authenticate(
-        self,
-        username: String,
-        password: String,
-    ) -> Result<GlowmarktApi, Error> {
-        let client = Client::new();
-        let request = client
-            .post(self.url("auth"))
-            .json(&AuthRequest { username, password });
-
-        let response: AuthResponse = self
-            .api_call(&client, request)
-            .await
-            .map_err(|e| format!("Error authenticating: {}", e))?;
-
-        if !response.valid {
-            return Error::err("Authentication error");
-        }
-
-        log::debug!("Authenticated with API until {}", iso(response.expiry));
-
-        Ok(GlowmarktApi {
-            token: response.token,
-            endpoint: self,
-            client,
-        })
-    }
-
-    fn url<S: Display>(&self, path: S) -> String {
-        format!("{}/{}", self.base_url, path)
-    }
-
-    async fn api_call<T>(&self, client: &Client, request: RequestBuilder) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
-        let request = request
-            .header("applicationId", &self.app_id)
-            .header("Content-Type", "application/json")
-            .build()?;
-
-        log::debug!("Sending {} request to {}", request.method(), request.url());
-        let response = client.execute(request).await?;
-
-        if !response.status().is_success() {
-            log::error!("API returned error: {}", response.status());
-            return Error::err(format!(
-                "API returned unexpected response: {}",
-                response.status()
-            ));
-        }
-
-        let result = response.text().await?;
-        log::trace!("Received: {}", result);
-
-        Ok(serde_json::from_str::<T>(&result)?)
-    }
-}
-
-struct ApiRequest<'a> {
-    endpoint: &'a GlowmarktEndpoint,
-    client: &'a Client,
-    request: RequestBuilder,
-}
-
-impl<'a> ApiRequest<'a> {
-    async fn request<T: DeserializeOwned>(self) -> Result<T, Error> {
-        self.endpoint.api_call(self.client, self.request).await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct GlowmarktApi {
-    pub token: String,
-    endpoint: GlowmarktEndpoint,
-    client: Client,
-}
-
-impl GlowmarktApi {
-    /// Authenticates with the default Glowmarkt API endpoint.
-    pub async fn authenticate(username: String, password: String) -> Result<GlowmarktApi, Error> {
-        GlowmarktEndpoint::default()
-            .authenticate(username, password)
-            .await
-    }
-
-    fn get_request<S>(&self, path: S) -> ApiRequest
-    where
-        S: Display,
-    {
-        let request = self
-            .client
-            .get(self.endpoint.url(path))
-            .header("token", &self.token);
-
-        ApiRequest {
-            endpoint: &self.endpoint,
-            client: &self.client,
-            request,
-        }
-    }
-
-    fn query_request<S, T>(&self, path: S, query: &T) -> ApiRequest
-    where
-        S: Display,
-        T: Serialize + ?Sized,
-    {
-        let request = self
-            .client
-            .get(self.endpoint.url(path))
-            .header("token", &self.token)
-            .query(query);
-
-        ApiRequest {
-            endpoint: &self.endpoint,
-            client: &self.client,
-            request,
-        }
-    }
-
-    // fn post_request<S, T>(&self, path: S, data: &T) -> ApiRequest
-    // where
-    //     S: Display,
-    //     T: Serialize,
-    // {
-    //     let request = self
-    //         .client
-    //         .post(self.endpoint.url(path))
-    //         .header("Content-Type", "application/json")
-    //         .header("token", &self.token)
-    //         .json(data);
-
-    //     ApiRequest {
-    //         endpoint: &self.endpoint,
-    //         client: &self.client,
-    //         request,
-    //     }
-    // }
-}
-
-/// [Device Management System](https://api.glowmarkt.com/api-docs/v0-1/dmssys/#/)
-impl GlowmarktApi {
-    /// Retrieves all of the known device types.
-    pub async fn device_types(&self) -> Result<Vec<DeviceType>, Error> {
-        self.get_request("devicetype")
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing device types: {}", e)))
-    }
-
-    /// Retrieves all of the devices registered for an account.
-    pub async fn devices(&self) -> Result<Vec<Device>, Error> {
-        self.get_request("device")
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing devices: {}", e)))
-    }
-}
-
-/// [Virtual Entity System](https://api.glowmarkt.com/api-docs/v0-1/vesys/#/)
-impl GlowmarktApi {
-    /// Retrieves all of the virtual entities registered for an account.
-    pub async fn virtual_entities(&self) -> Result<Vec<VirtualEntity>, Error> {
-        self.get_request("virtualentity")
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing virtual entities: {}", e)))
-    }
-
-    /// Retrieves a single virtual entity by ID.
-    pub async fn virtual_entity(&self, entity_id: &str) -> Result<VirtualEntity, Error> {
-        self.get_request(format!("virtualentity/{}", entity_id))
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing virtual entity: {}", e)))
-    }
-}
-
-/// [Resource System](https://api.glowmarkt.com/api-docs/v0-1/resourcesys/#/)
-impl GlowmarktApi {
-    /// Retrieves all of the known resource types.
-    pub async fn resource_types(&self) -> Result<Vec<ResourceType>, Error> {
-        self.get_request("resourcetype")
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing resource types: {}", e)))
-    }
-
-    /// Retrieves a single resource by ID.
-    pub async fn resource(&self, resource_id: &str) -> Result<Resource, Error> {
-        self.get_request(format!("resource/{}", resource_id))
-            .request()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing resource: {}", e)))
-    }
-
-    pub async fn readings(
-        &self,
-        resource_id: &str,
-        start: OffsetDateTime,
-        end: OffsetDateTime,
-        period: ReadingPeriod,
-    ) -> Result<Vec<Reading>, Error> {
-        let period_arg = match period {
-            ReadingPeriod::HalfHour => "PT30M".to_string(),
-            ReadingPeriod::Hour => "PT1H".to_string(),
-            ReadingPeriod::Day => "P1D".to_string(),
-            ReadingPeriod::Week => "P1W".to_string(),
-            // ReadingPeriod::Month => "P1M".to_string(),
-            // ReadingPeriod::Year => "P1Y".to_string(),
-        };
-
-        let readings = self
-            .query_request(
-                format!("resource/{}/readings", resource_id),
-                &[
-                    ("from", iso(start.to_offset(UtcOffset::UTC))),
-                    ("to", iso(end.to_offset(UtcOffset::UTC))),
-                    ("period", period_arg),
-                    ("offset", 0.to_string()),
-                    ("function", "sum".to_string()),
-                ],
-            )
-            .request::<ReadingsResponse>()
-            .await
-            .map_err(|e| Error::from(format!("Error accessing resource readings: {}", e)))?;
-
-        Ok(readings
-            .data
-            .into_iter()
-            .map(|(timestamp, value)| {
-                let start = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
-
-                let end = match period {
-                    ReadingPeriod::HalfHour => start + Duration::minutes(30),
-                    ReadingPeriod::Hour => start + Duration::hours(1),
-                    ReadingPeriod::Day => start + Duration::days(1),
-                    ReadingPeriod::Week => start + Duration::weeks(1),
-                };
-
-                Reading { start, end, value }
-            })
-            .collect())
-    }
 }
