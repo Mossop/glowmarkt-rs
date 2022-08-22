@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::{collections::BTreeMap, fmt};
 
 use glowmarkt::{Device, Resource};
 use time::{OffsetDateTime, UtcOffset};
@@ -6,17 +6,17 @@ use time::{OffsetDateTime, UtcOffset};
 pub struct Measurement {
     pub id: String,
     pub timestamp: i128,
-    pub tags: HashMap<String, String>,
-    pub fields: HashMap<String, f64>,
+    pub tags: BTreeMap<String, String>,
+    pub fields: BTreeMap<String, f64>,
 }
 
 impl Measurement {
-    pub fn new(id: &str, timestamp: OffsetDateTime, tags: HashMap<String, String>) -> Self {
+    pub fn new(id: &str, timestamp: OffsetDateTime, tags: BTreeMap<String, String>) -> Self {
         Measurement {
             id: id.to_owned(),
             timestamp: timestamp.to_offset(UtcOffset::UTC).unix_timestamp_nanos(),
             tags,
-            fields: HashMap::new(),
+            fields: BTreeMap::new(),
         }
     }
 
@@ -62,8 +62,8 @@ impl fmt::Display for Measurement {
     }
 }
 
-pub fn tags_for_device(device: &Device) -> HashMap<String, String> {
-    let mut tags = HashMap::new();
+pub fn tags_for_device(device: &Device) -> BTreeMap<String, String> {
+    let mut tags = BTreeMap::new();
     tags.insert("device-id".to_string(), device.id.clone());
     if let Some(ref description) = device.description {
         tags.insert("device".to_string(), description.clone());
@@ -72,9 +72,9 @@ pub fn tags_for_device(device: &Device) -> HashMap<String, String> {
 }
 
 pub fn tags_for_resource(
-    tags: &HashMap<String, String>,
+    tags: &BTreeMap<String, String>,
     resource: &Resource,
-) -> HashMap<String, String> {
+) -> BTreeMap<String, String> {
     let mut tags = tags.clone();
     tags.insert("resource-id".to_string(), resource.id.clone());
     tags.insert("resource".to_string(), resource.name.clone());
