@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use flexi_logger::Logger;
 use glowmarkt::{Device, Error, GlowmarktApi, ReadingPeriod, Resource};
 use influx::Measurement;
+use serde::Serialize;
 use serde_json::to_string_pretty;
 use time::{format_description::well_known::Iso8601, OffsetDateTime};
 
@@ -26,17 +27,24 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     /// Lists devices.
-    Devices,
+    Device {
+        /// The specific device to display.
+        id: Option<String>,
+    },
     /// Lists device types.
-    DeviceTypes,
+    DeviceType {
+        /// The specific device type to display.
+        id: Option<String>,
+    },
     /// Lists resource types.
-    ResourceTypes,
-    /// Displays all known resources.
-    Resources,
-    /// Displays details for a resource.
+    ResourceType {
+        /// The specific resource type to display.
+        id: Option<String>,
+    },
+    /// Lists resources.
     Resource {
-        /// The resource to display.
-        resource_id: String,
+        /// The specific resource to display.
+        id: Option<String>,
     },
     /// Lists meter readings.
     Readings {
@@ -85,27 +93,18 @@ fn values<T>(map: HashMap<String, T>) -> Vec<T> {
     map.into_values().collect()
 }
 
-async fn devices(api: GlowmarktApi) -> Result<(), String> {
-    let devices = api.devices().await.str_err()?;
-    println!("{}", to_string_pretty(&values(devices)).str_err()?);
-    Ok(())
-}
+fn display_result<T: Serialize>(
+    items: Result<HashMap<String, T>, Error>,
+    id: Option<String>,
+) -> Result<(), String> {
+    let items = items.str_err()?;
 
-async fn device_types(api: GlowmarktApi) -> Result<(), String> {
-    let types = api.device_types().await.str_err()?;
-    println!("{}", to_string_pretty(&values(types)).str_err()?);
-    Ok(())
-}
+    if let Some(id) = id {
+        println!("{}", to_string_pretty(&items.get(&id)).str_err()?);
+    } else {
+        println!("{}", to_string_pretty(&values(items)).str_err()?);
+    }
 
-async fn resources(api: GlowmarktApi) -> Result<(), String> {
-    let resources = api.resources().await.str_err()?;
-    println!("{}", to_string_pretty(&values(resources)).str_err()?);
-    Ok(())
-}
-
-async fn resource_types(api: GlowmarktApi) -> Result<(), String> {
-    let types = api.resource_types().await.str_err()?;
-    println!("{}", to_string_pretty(&values(types)).str_err()?);
     Ok(())
 }
 
@@ -122,13 +121,6 @@ async fn readings(
         .readings(&resource, &start, &end, ReadingPeriod::HalfHour)
         .await
         .str_err()?;
-
-    println!("{}", to_string_pretty(&readings).str_err()?);
-    Ok(())
-}
-
-async fn resource(api: GlowmarktApi, resource: String) -> Result<(), String> {
-    let readings = api.resource(&resource).await.str_err()?;
 
     println!("{}", to_string_pretty(&readings).str_err()?);
     Ok(())
@@ -211,11 +203,10 @@ async fn main() -> Result<(), String> {
     };
 
     match args.command {
-        Command::Devices => devices(api).await,
-        Command::DeviceTypes => device_types(api).await,
-        Command::ResourceTypes => resource_types(api).await,
-        Command::Resources => resources(api).await,
-        Command::Resource { resource_id } => resource(api, resource_id).await,
+        Command::Device { id } => display_result(api.devices().await, id),
+        Command::DeviceType { id } => display_result(api.device_types().await, id),
+        Command::ResourceType { id } => display_result(api.resource_types().await, id),
+        Command::Resource { id } => display_result(api.resources().await, id),
         Command::Readings {
             resource_id,
             from,
