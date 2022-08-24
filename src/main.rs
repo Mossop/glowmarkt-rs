@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::to_string_pretty;
 use time::{format_description::well_known::Iso8601, Duration, OffsetDateTime};
 
-use crate::influx::{tags_for_device, tags_for_resource};
+use crate::influx::{field_for_classifier, tags_for_device, tags_for_resource};
 
 mod influx;
 
@@ -180,7 +180,10 @@ async fn influx(
                 for reading in readings {
                     let mut measurement =
                         Measurement::new("glowmarkt", reading.start, tags.clone());
-                    measurement.add_field("value", reading.value as f64);
+                    measurement.add_field(
+                        field_for_classifier(&resource.classifier),
+                        reading.value as f64,
+                    );
                     measurements.push(measurement);
                 }
             }

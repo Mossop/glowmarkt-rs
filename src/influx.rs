@@ -68,6 +68,11 @@ pub fn tags_for_device(device: &Device) -> BTreeMap<String, String> {
     if let Some(ref description) = device.description {
         tags.insert("device".to_string(), description.clone());
     }
+    tags.insert("device-active".to_string(), device.active.to_string());
+    tags.insert("hardware-id".to_string(), device.hardware_id.to_string());
+    for (k, v) in device.hardware_ids.iter() {
+        tags.insert(k.clone(), v.clone());
+    }
     tags
 }
 
@@ -78,13 +83,31 @@ pub fn tags_for_resource(
     let mut tags = tags.clone();
     tags.insert("resource-id".to_string(), resource.id.clone());
     tags.insert("resource".to_string(), resource.name.clone());
+    tags.insert("resource-active".to_string(), resource.active.to_string());
+
     if let Some(ref classifier) = resource.classifier {
         tags.insert("classifier".to_string(), classifier.clone());
     }
+
     if let Some(ref unit) = resource.base_unit {
         tags.insert("unit".to_string(), unit.clone());
     }
+
+    if let Some(ref classifier) = resource.classifier {
+        if let Some(class) = classifier.split('.').next() {
+            tags.insert("class".to_string(), class.to_string());
+        }
+    }
+
     tags
+}
+
+pub fn field_for_classifier(classifier: &Option<String>) -> &str {
+    if let Some(classifier) = classifier {
+        classifier.split('.').last().unwrap()
+    } else {
+        "value"
+    }
 }
 
 fn escape(tag: &str) -> String {
