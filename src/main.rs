@@ -6,14 +6,22 @@ use glowmarkt::{Device, Error, ErrorKind, GlowmarktApi, ReadingPeriod, Resource}
 use influx::Measurement;
 use serde::Serialize;
 use serde_json::to_string_pretty;
-use time::{format_description::well_known::Iso8601, OffsetDateTime};
+use time::{format_description::well_known::Iso8601, Duration, OffsetDateTime};
 
 use crate::influx::{tags_for_device, tags_for_resource};
 
 mod influx;
 
 #[derive(Parser)]
-#[clap(author, version, about)]
+#[clap(author, version)]
+/// Access to the Glowmarkt API for smart meter data.
+///
+/// All commands require either a username and password or a valid JWT token to
+/// operate. If you provide both then the token will be checked for validity
+/// and if not valid a new token will be generated.
+/// Dates can be specified either is ISO-8601 (`2022-08-21T09:00:00Z`) or as a
+/// negative offset from the current time in minutes, so `-1440` would be
+/// interpreted as 24 hours ago.
 struct Args {
     #[clap(short, long, env)]
     pub username: Option<String>,
@@ -72,12 +80,22 @@ enum Command {
 }
 
 fn parse_date(date: String) -> Result<OffsetDateTime, String> {
-    OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+    if let Some(date) = date.strip_prefix('-') {
+        let offset = date.parse::<i64>().str_err()?;
+        Ok(OffsetDateTime::now_utc() - Duration::minutes(offset))
+    } else {
+        OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+    }
 }
 
 fn parse_end_date(date: Option<String>) -> Result<OffsetDateTime, String> {
     if let Some(date) = date {
-        OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+        if let Some(date) = date.strip_prefix('-') {
+            let offset = date.parse::<i64>().str_err()?;
+            Ok(OffsetDateTime::now_utc() - Duration::minutes(offset))
+        } else {
+            OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+        }
     } else {
         Ok(OffsetDateTime::now_utc())
     }
