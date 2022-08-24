@@ -1,19 +1,31 @@
+//! A basic error container.
+
 use std::fmt::{self, Display};
 
 use reqwest::StatusCode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The type of an error.
 pub enum ErrorKind {
+    /// The requested item was not found.
     NotFound,
+    /// Authentication failed.
     NotAuthenticated,
+    /// A network error.
     Network,
+    /// An error likely caused by this crate.
     Client,
+    /// An error on the server.
     Server,
+    /// An error decoding the API response.
     Response,
 }
 
+/// A fairly generic error container.
 pub struct Error {
+    /// The type of this error.
     pub kind: ErrorKind,
+    /// A description of this error.
     pub message: String,
 }
 

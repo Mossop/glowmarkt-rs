@@ -1,23 +1,24 @@
-use std::{
-    collections::HashMap,
-    fmt::{self, Display},
-};
+//! Access to the Glowmarkt API for meter readings.
+//!
+//! Developed based on https://bitbucket.org/ijosh/brightglowmarkt/src/master/
+#![warn(missing_docs)]
+
+use std::{collections::HashMap, fmt::Display};
 
 use error::maybe;
 use reqwest::{Client, RequestBuilder};
-use serde::{
-    de::{self, DeserializeOwned, MapAccess, Visitor},
-    Deserialize, Deserializer, Serialize,
-};
+use serde::{de::DeserializeOwned, Serialize};
 use time::{OffsetDateTime, UtcOffset};
 
+pub mod api;
 pub mod error;
 
+pub use api::{Device, DeviceType, Resource, ResourceType, VirtualEntity};
 pub use error::{Error, ErrorKind};
 
-// Developed based on https://bitbucket.org/ijosh/brightglowmarkt/src/master/
-
+/// The default API endpoint.
 pub const BASE_URL: &str = "https://api.glowmarkt.com/api/v0-1";
+/// The default application ID to use when communicating with the API.
 pub const APPLICATION_ID: &str = "b0f1b774-a586-4f72-9edd-27ead8aa7a8d";
 
 fn iso(dt: OffsetDateTime) -> String {
@@ -32,6 +33,23 @@ fn iso(dt: OffsetDateTime) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy)]
+/// The time window for each reading.
+pub enum ReadingPeriod {
+    /// 30 minutes.
+    HalfHour,
+    /// 1 hour.
+    Hour,
+    /// 1 day.
+    Day,
+    /// 1 week.
+    Week,
+    /// 1 month.
+    Month,
+    /// 1 year.
+    Year,
+}
+
 trait Identified {
     fn id(&self) -> &str;
 }
@@ -42,327 +60,47 @@ fn build_map<I: Identified>(list: Vec<I>) -> HashMap<String, I> {
         .collect::<HashMap<String, I>>()
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ReadingPeriod {
-    HalfHour,
-    Hour,
-    Day,
-    Week,
-    Month,
-    Year,
-}
-
-#[derive(Serialize, Debug)]
-struct AuthRequest {
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct ErrorResponse {
-    pub message: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct InvalidAuthResponse {
-    pub error: ErrorResponse,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct ValidAuthResponse {
-    pub valid: bool,
-    pub token: String,
-    #[serde(rename = "exp", with = "time::serde::timestamp")]
-    pub expiry: OffsetDateTime,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-enum AuthResponse {
-    Invalid(InvalidAuthResponse),
-    Valid(ValidAuthResponse),
-}
-
-impl AuthResponse {
-    pub fn validate(self) -> Result<ValidAuthResponse, Error> {
-        match self {
-            AuthResponse::Valid(response) => {
-                if response.valid {
-                    Ok(response)
-                } else {
-                    Err(Error {
-                        kind: ErrorKind::NotAuthenticated,
-                        message: "Authentication error".to_string(),
-                    })
-                }
-            }
-            AuthResponse::Invalid(response) => Err(Error {
-                kind: ErrorKind::NotAuthenticated,
-                message: response.error.message,
-            }),
-        }
-    }
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct InvalidValidateResponse {
-    pub error: ErrorResponse,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct ValidValidateResponse {
-    pub valid: bool,
-    #[serde(rename = "exp", with = "time::serde::timestamp")]
-    pub expiry: OffsetDateTime,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-enum ValidateResponse {
-    Invalid(InvalidValidateResponse),
-    Valid(ValidValidateResponse),
-}
-
-impl ValidateResponse {
-    pub fn validate(self) -> Result<ValidValidateResponse, Error> {
-        match self {
-            ValidateResponse::Valid(response) => {
-                if response.valid {
-                    Ok(response)
-                } else {
-                    Err(Error {
-                        kind: ErrorKind::NotAuthenticated,
-                        message: "Authentication error".to_string(),
-                    })
-                }
-            }
-            ValidateResponse::Invalid(response) => Err(Error {
-                kind: ErrorKind::NotAuthenticated,
-                message: response.error.message,
-            }),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceInfo {
-    pub resource_id: String,
-    pub resource_type_id: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct VirtualEntity {
-    #[serde(rename(deserialize = "veId"))]
-    pub id: String,
-    pub name: String,
-    pub active: bool,
-    #[serde(rename(deserialize = "veTypeId"))]
-    pub type_id: String,
-    pub owner_id: String,
-    pub resources: Vec<ResourceInfo>,
-}
-
-impl Identified for VirtualEntity {
+impl Identified for api::VirtualEntity {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Sensor {
-    pub protocol_id: String,
-    pub resource_type_id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Protocol {
-    pub protocol: String,
-    pub sensors: Vec<Sensor>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceType {
-    #[serde(rename(deserialize = "deviceTypeId"))]
-    pub id: String,
-    pub description: Option<String>,
-    pub active: bool,
-    pub protocol: Protocol,
-    #[serde(default)]
-    pub configuration: serde_json::Value,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-impl Identified for DeviceType {
+impl Identified for api::DeviceType {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceSensor {
-    pub protocol_id: String,
-    pub resource_id: String,
-    pub resource_type_id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceProtocol {
-    pub protocol: String,
-    pub sensors: Vec<DeviceSensor>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Device {
-    #[serde(rename(deserialize = "deviceId"))]
-    pub id: String,
-    pub description: Option<String>,
-    pub active: bool,
-    pub hardware_id: String,
-    pub device_type_id: String,
-    pub owner_id: String,
-    pub hardware_id_names: Vec<String>,
-    pub hardware_ids: HashMap<String, String>,
-    pub parent_hardware_id: Vec<String>,
-    pub tags: Vec<String>,
-    pub protocol: DeviceProtocol,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-impl Identified for Device {
+impl Identified for api::Device {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DataSourceResourceTypeInfo {
-    #[serde(rename = "type")]
-    pub data_type: Option<String>,
-    pub unit: Option<String>,
-    pub range: Option<String>,
-    pub is_cost: Option<bool>,
-    pub method: Option<String>,
-}
-
-impl From<String> for DataSourceResourceTypeInfo {
-    fn from(val: String) -> DataSourceResourceTypeInfo {
-        DataSourceResourceTypeInfo {
-            data_type: Some(val),
-            unit: None,
-            range: None,
-            is_cost: None,
-            method: None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Field {
-    pub field_name: String,
-    pub datatype: String,
-    pub negative: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Storage {
-    #[serde(rename = "type")]
-    pub storage_type: String,
-    pub sampling: String,
-    #[serde(default)]
-    pub start: serde_json::Value,
-    pub fields: Vec<Field>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceType {
-    #[serde(rename(deserialize = "resourceTypeId"))]
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub label: Option<String>,
-    pub active: bool,
-    pub classifier: Option<String>,
-    pub base_unit: Option<String>,
-    pub data_source_type: String,
-    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
-    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
-    #[serde(default)]
-    pub units: HashMap<String, String>,
-    pub storage: Vec<Storage>,
-}
-
-impl Identified for ResourceType {
+impl Identified for api::ResourceType {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Resource {
-    #[serde(rename(deserialize = "resourceId"))]
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub label: Option<String>,
-    pub active: bool,
-    #[serde(rename(deserialize = "resourceTypeId"))]
-    pub type_id: String,
-    pub owner_id: String,
-    pub classifier: Option<String>,
-    pub base_unit: Option<String>,
-    pub data_source_type: String,
-    #[serde(default, deserialize_with = "ds_type_info_deserializer")]
-    pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
-    pub data_source_unit_info: serde_json::Value,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-}
-
-impl Identified for Resource {
+impl Identified for api::Resource {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[derive(Serialize, Debug)]
+/// A meter reading
 pub struct Reading {
     #[serde(with = "time::serde::rfc3339")]
+    /// The start time of the period.
     pub start: OffsetDateTime,
+    /// The length of the period.
+    #[serde(skip)]
+    pub period: ReadingPeriod,
+    /// The total usage.
     pub value: f32,
-}
-
-type ReadingTuple = (i64, f32);
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadingsResponse {
-    pub data: Vec<ReadingTuple>,
 }
 
 /// The API endpoint.
@@ -370,7 +108,9 @@ pub struct ReadingsResponse {
 /// Normally a non-default endpoint would only be useful for testing purposes.
 #[derive(Debug, Clone)]
 pub struct GlowmarktEndpoint {
+    /// The URL of the API endpoint.
     pub base_url: String,
+    /// The application ID to use when communicating with the endpoint.
     pub app_id: String,
 }
 
@@ -427,13 +167,16 @@ impl<'a> ApiRequest<'a> {
 }
 
 #[derive(Debug, Clone)]
+/// Access to the Glowmarkt API.
 pub struct GlowmarktApi {
+    /// The current JWT token.
     pub token: String,
     endpoint: GlowmarktEndpoint,
     client: Client,
 }
 
 impl GlowmarktApi {
+    /// Create with a provided JWT token.
     pub fn new(token: &str) -> Self {
         Self {
             token: token.to_owned(),
@@ -443,6 +186,8 @@ impl GlowmarktApi {
     }
 
     /// Authenticates with the default Glowmarkt API endpoint.
+    ///
+    /// Generates a valid JWT token if successful.
     pub async fn authenticate(username: &str, password: &str) -> Result<GlowmarktApi, Error> {
         Self::auth(Default::default(), username, password).await
     }
@@ -503,20 +248,20 @@ impl GlowmarktApi {
 
 /// [User System](https://api.glowmarkt.com/api-docs/v0-1/usersys/usertypes/)
 impl GlowmarktApi {
-    /// Authenticate against an endpoint.
+    /// Authenticate against a specific endpoint.
     pub async fn auth(
         endpoint: GlowmarktEndpoint,
         username: &str,
         password: &str,
     ) -> Result<GlowmarktApi, Error> {
         let client = Client::new();
-        let request = client.post(endpoint.url("auth")).json(&AuthRequest {
+        let request = client.post(endpoint.url("auth")).json(&api::AuthRequest {
             username: username.to_owned(),
             password: password.to_owned(),
         });
 
         let response = endpoint
-            .api_call::<AuthResponse>(&client, request)
+            .api_call::<api::AuthResponse>(&client, request)
             .await?
             .validate()?;
 
@@ -533,7 +278,7 @@ impl GlowmarktApi {
     pub async fn validate(&self) -> Result<bool, Error> {
         let response = self
             .get_request("auth")
-            .request::<ValidateResponse>()
+            .request::<api::ValidateResponse>()
             .await
             .and_then(|r| r.validate())?;
 
@@ -546,7 +291,7 @@ impl GlowmarktApi {
 /// [Device Management System](https://api.glowmarkt.com/api-docs/v0-1/dmssys/#/)
 impl GlowmarktApi {
     /// Retrieves all of the known device types.
-    pub async fn device_types(&self) -> Result<HashMap<String, DeviceType>, Error> {
+    pub async fn device_types(&self) -> Result<HashMap<String, api::DeviceType>, Error> {
         self.get_request("devicetype")
             .request()
             .await
@@ -554,12 +299,12 @@ impl GlowmarktApi {
     }
 
     /// Retrieves all of the devices registered for an account.
-    pub async fn devices(&self) -> Result<HashMap<String, Device>, Error> {
+    pub async fn devices(&self) -> Result<HashMap<String, api::Device>, Error> {
         self.get_request("device").request().await.map(build_map)
     }
 
     /// Retrieves a single device.
-    pub async fn device(&self, id: &str) -> Result<Option<Device>, Error> {
+    pub async fn device(&self, id: &str) -> Result<Option<api::Device>, Error> {
         match self.get_request(format!("device/{}", id)).request().await {
             Ok(device) => Ok(Some(device)),
             Err(error) => {
@@ -576,7 +321,7 @@ impl GlowmarktApi {
 /// [Virtual Entity System](https://api.glowmarkt.com/api-docs/v0-1/vesys/#/)
 impl GlowmarktApi {
     /// Retrieves all of the virtual entities registered for an account.
-    pub async fn virtual_entities(&self) -> Result<HashMap<String, VirtualEntity>, Error> {
+    pub async fn virtual_entities(&self) -> Result<HashMap<String, api::VirtualEntity>, Error> {
         self.get_request("virtualentity")
             .request()
             .await
@@ -584,7 +329,10 @@ impl GlowmarktApi {
     }
 
     /// Retrieves a single virtual entity by ID.
-    pub async fn virtual_entity(&self, entity_id: &str) -> Result<Option<VirtualEntity>, Error> {
+    pub async fn virtual_entity(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<api::VirtualEntity>, Error> {
         maybe(
             self.get_request(format!("virtualentity/{}", entity_id))
                 .request()
@@ -596,7 +344,7 @@ impl GlowmarktApi {
 /// [Resource System](https://api.glowmarkt.com/api-docs/v0-1/resourcesys/#/)
 impl GlowmarktApi {
     /// Retrieves all of the known resource types.
-    pub async fn resource_types(&self) -> Result<HashMap<String, ResourceType>, Error> {
+    pub async fn resource_types(&self) -> Result<HashMap<String, api::ResourceType>, Error> {
         self.get_request("resourcetype")
             .request()
             .await
@@ -604,12 +352,12 @@ impl GlowmarktApi {
     }
 
     /// Retrieves all resources.
-    pub async fn resources(&self) -> Result<HashMap<String, Resource>, Error> {
+    pub async fn resources(&self) -> Result<HashMap<String, api::Resource>, Error> {
         self.get_request("resource").request().await.map(build_map)
     }
 
     /// Retrieves a single resource by ID.
-    pub async fn resource(&self, resource_id: &str) -> Result<Option<Resource>, Error> {
+    pub async fn resource(&self, resource_id: &str) -> Result<Option<api::Resource>, Error> {
         maybe(
             self.get_request(format!("resource/{}", resource_id))
                 .request()
@@ -654,7 +402,7 @@ impl GlowmarktApi {
                     ("function", "sum".to_string()),
                 ],
             )
-            .request::<ReadingsResponse>()
+            .request::<api::ReadingsResponse>()
             .await?;
 
         Ok(readings
@@ -662,64 +410,9 @@ impl GlowmarktApi {
             .into_iter()
             .map(|(timestamp, value)| Reading {
                 start: OffsetDateTime::from_unix_timestamp(timestamp).unwrap(),
+                period,
                 value,
             })
             .collect())
     }
-}
-
-fn ds_type_info_deserializer<'de, D>(
-    deserializer: D,
-) -> Result<Option<DataSourceResourceTypeInfo>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    // This is a Visitor that forwards string types to T's `FromStr` impl and
-    // forwards map types to T's `Deserialize` impl. The `PhantomData` is to
-    // keep the compiler from complaining about T being an unused generic type
-    // parameter. We need T in order to know the Value type for the Visitor
-    // impl.
-    struct StringOrStruct;
-
-    impl<'de> Visitor<'de> for StringOrStruct {
-        type Value = Option<DataSourceResourceTypeInfo>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("string or object")
-        }
-
-        fn visit_none<E>(self) -> Result<Option<DataSourceResourceTypeInfo>, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Option<DataSourceResourceTypeInfo>, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value.to_owned().into()))
-        }
-
-        fn visit_string<E>(self, value: String) -> Result<Option<DataSourceResourceTypeInfo>, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value.into()))
-        }
-
-        fn visit_map<M>(self, map: M) -> Result<Option<DataSourceResourceTypeInfo>, M::Error>
-        where
-            M: MapAccess<'de>,
-        {
-            // `MapAccessDeserializer` is a wrapper that turns a `MapAccess`
-            // into a `Deserializer`, allowing it to be used as the input to T's
-            // `Deserialize` implementation. T then deserializes itself using
-            // the entries from the map visitor.
-            Deserialize::deserialize(de::value::MapAccessDeserializer::new(map)).map(Some)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrStruct)
 }

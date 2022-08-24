@@ -3,6 +3,7 @@ name = "glowmarkt"
 version = "0.1.0"
 description = "Access to the Glowmarkt API for smart meter data."
 authors = ["Dave Townsend <dtownsend@oxymoronical.com>"]
+license = "MIT"
 edition = "2021"
 
 [dependencies]
