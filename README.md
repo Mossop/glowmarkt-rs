@@ -12,6 +12,19 @@ developed with the primary purpose of being able to submit meter readings to
 [InfluxDB](https://www.influxdata.com/products/influxdb-overview/) but along the
 way a number of other ways of displaying data from the API were added to the CLI.
 
+In order to use this you need to have installed and registered your smart meters
+with the [Bright mobile app](https://play.google.com/store/apps/details?id=uk.co.hildebrand.brightionic).
+Then you can use the username and password you used there with this tool.
+
+## CLI Usage
+
+The CLI should be reasonably well documented with `--help`.
+
+```shell
+$> cargo install glowmarkt
+$> glowmarkt --username='me@somewhere.com' --password='wibble' device
+```
+
 ## Module Usage
 
 The API is async so you must set up an async runtime such as tokio.
@@ -24,11 +37,3 @@ let devices = api.devices().await?;
 ```
 
 Consult the [module docs](https://docs.rs/glowmarkt) for more information.
-
-## CLI Usage
-
-The CLI should be reasonably well documented with `--help`.
-
-```shell
-$> glowmarkt --username='me@somewhere.com' --password='wibble' device
-```
