@@ -1,6 +1,6 @@
 //! Access to the Glowmarkt API for meter readings.
 //!
-//! Developed based on https://bitbucket.org/ijosh/brightglowmarkt/src/master/
+//! Developed based on <https://bitbucket.org/ijosh/brightglowmarkt/src/master/>
 #![warn(missing_docs)]
 
 use std::{collections::HashMap, fmt::Display};
