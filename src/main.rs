@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::to_string_pretty;
 use time::{format_description::well_known::Iso8601, Duration, OffsetDateTime};
 
-use crate::influx::{field_for_classifier, tags_for_device, tags_for_resource};
+use crate::influx::{add_tags_for_device, add_tags_for_resource, field_for_classifier};
 
 mod influx;
 
@@ -35,6 +35,17 @@ struct Args {
 
     #[clap(subcommand)]
     command: Command,
+}
+
+fn parse_tag(val: &str) -> Result<(String, String), String> {
+    if let Some(pos) = val.find('=') {
+        Ok((val[0..pos].to_string(), val[pos + 1..].to_string()))
+    } else {
+        Err(format!(
+            "Unable to parse tag '{}', no equals sign present.",
+            val
+        ))
+    }
 }
 
 #[derive(Subcommand)]
@@ -78,6 +89,9 @@ enum Command {
         /// Don't strip trailing zero readings.
         #[clap(short, long, env)]
         no_strip: bool,
+        /// Add additional tags to the readings.
+        #[clap(short, long = "tag", value_parser=parse_tag)]
+        tags: Vec<(String, String)>,
         /// Start time of first reading.
         from: String,
         /// Start time of last reading (defaults to now).
@@ -158,6 +172,7 @@ async fn influx(
     api: GlowmarktApi,
     device: Option<String>,
     no_strip: bool,
+    tags: BTreeMap<String, String>,
     start: String,
     end: Option<String>,
 ) -> Result<(), String> {
@@ -169,17 +184,20 @@ async fn influx(
 
     async fn process_device(
         api: &GlowmarktApi,
+        tags: &BTreeMap<String, String>,
         resources: &HashMap<String, Resource>,
         device: Device,
         start: &OffsetDateTime,
         end: &OffsetDateTime,
         measurements: &mut BTreeMap<OffsetDateTime, Vec<Measurement>>,
     ) -> Result<(), Error> {
-        let tags = tags_for_device(&device);
+        let mut tags = tags.clone();
+        add_tags_for_device(&mut tags, &device);
 
         for sensor in device.protocol.sensors {
             if let Some(resource) = resources.get(&sensor.resource_id) {
-                let tags = tags_for_resource(&tags, resource);
+                let mut tags = tags.clone();
+                add_tags_for_resource(&mut tags, resource);
                 let readings = api
                     .readings(&resource.id, start, end, ReadingPeriod::HalfHour)
                     .await?;
@@ -205,14 +223,32 @@ async fn influx(
 
     if let Some(device) = device {
         if let Some(device) = api.device(&device).await? {
-            process_device(&api, &resources, device, &start, &end, &mut measurements).await?;
+            process_device(
+                &api,
+                &tags,
+                &resources,
+                device,
+                &start,
+                &end,
+                &mut measurements,
+            )
+            .await?;
         } else {
             eprintln!("Error: Unknown device {}", device);
         }
     } else {
         let devices = api.devices().await?.into_values();
         for device in devices {
-            process_device(&api, &resources, device, &start, &end, &mut measurements).await?;
+            process_device(
+                &api,
+                &tags,
+                &resources,
+                device,
+                &start,
+                &end,
+                &mut measurements,
+            )
+            .await?;
         }
     }
 
@@ -291,8 +327,9 @@ async fn main() -> Result<(), String> {
         Command::Influx {
             device,
             no_strip,
+            tags,
             from,
             to,
-        } => influx(api, device, no_strip, from, to).await,
+        } => influx(api, device, no_strip, tags.into_iter().collect(), from, to).await,
     }
 }

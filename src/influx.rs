@@ -62,8 +62,7 @@ impl fmt::Display for Measurement {
     }
 }
 
-pub fn tags_for_device(device: &Device) -> BTreeMap<String, String> {
-    let mut tags = BTreeMap::new();
+pub fn add_tags_for_device(tags: &mut BTreeMap<String, String>, device: &Device) {
     tags.insert("device-id".to_string(), device.id.clone());
     if let Some(ref description) = device.description {
         tags.insert("device".to_string(), description.clone());
@@ -73,14 +72,9 @@ pub fn tags_for_device(device: &Device) -> BTreeMap<String, String> {
     for (k, v) in device.hardware_ids.iter() {
         tags.insert(k.clone(), v.clone());
     }
-    tags
 }
 
-pub fn tags_for_resource(
-    tags: &BTreeMap<String, String>,
-    resource: &Resource,
-) -> BTreeMap<String, String> {
-    let mut tags = tags.clone();
+pub fn add_tags_for_resource(tags: &mut BTreeMap<String, String>, resource: &Resource) {
     tags.insert("resource-id".to_string(), resource.id.clone());
     tags.insert("resource".to_string(), resource.name.clone());
     tags.insert("resource-active".to_string(), resource.active.to_string());
@@ -98,8 +92,6 @@ pub fn tags_for_resource(
             tags.insert("class".to_string(), class.to_string());
         }
     }
-
-    tags
 }
 
 pub fn field_for_classifier(classifier: &Option<String>) -> &str {
