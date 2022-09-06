@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+};
 
 use clap::{Parser, Subcommand};
 use flexi_logger::Logger;
@@ -72,6 +75,9 @@ enum Command {
         /// The device to read. If absent all devices are read.
         #[clap(short, long, env)]
         device: Option<String>,
+        /// Don't strip trailing zero readings.
+        #[clap(short, long, env)]
+        no_strip: bool,
         /// Start time of first reading.
         from: String,
         /// Start time of last reading (defaults to now).
@@ -151,12 +157,13 @@ async fn readings(
 async fn influx(
     api: GlowmarktApi,
     device: Option<String>,
+    no_strip: bool,
     start: String,
     end: Option<String>,
 ) -> Result<(), String> {
     let start = parse_date(start)?;
     let end = parse_end_date(end)?;
-    let mut measurements = Vec::new();
+    let mut measurements = BTreeMap::new();
 
     let resources = api.resources().await?;
 
@@ -166,7 +173,7 @@ async fn influx(
         device: Device,
         start: &OffsetDateTime,
         end: &OffsetDateTime,
-        measurements: &mut Vec<Measurement>,
+        measurements: &mut BTreeMap<OffsetDateTime, Vec<Measurement>>,
     ) -> Result<(), Error> {
         let tags = tags_for_device(&device);
 
@@ -184,7 +191,11 @@ async fn influx(
                         field_for_classifier(&resource.classifier),
                         reading.value as f64,
                     );
-                    measurements.push(measurement);
+
+                    measurements
+                        .entry(reading.start)
+                        .or_default()
+                        .push(measurement);
                 }
             }
         }
@@ -205,9 +216,24 @@ async fn influx(
         }
     }
 
-    measurements.sort_unstable_by(|m1, m2| m1.timestamp.partial_cmp(&m2.timestamp).unwrap());
-    for measurement in measurements {
-        println!("{}", measurement);
+    if !no_strip {
+        let timestamps: Vec<OffsetDateTime> = measurements.keys().rev().cloned().collect();
+        for timestamp in timestamps {
+            if measurements
+                .get(&timestamp)
+                .unwrap()
+                .iter()
+                .all(|m| m.fields.iter().all(|(_, v)| *v == 0.0))
+            {
+                measurements.remove(&timestamp);
+            }
+        }
+    }
+
+    for (_, measurements) in measurements {
+        for measurement in measurements {
+            println!("{}", measurement);
+        }
     }
 
     Ok(())
@@ -262,6 +288,11 @@ async fn main() -> Result<(), String> {
             from,
             to,
         } => readings(api, resource_id, from, to).await,
-        Command::Influx { device, from, to } => influx(api, device, from, to).await,
+        Command::Influx {
+            device,
+            no_strip,
+            from,
+            to,
+        } => influx(api, device, no_strip, from, to).await,
     }
 }

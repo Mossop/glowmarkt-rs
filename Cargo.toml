@@ -1,6 +1,6 @@
 [package]
 name = "glowmarkt"
-version = "0.1.1"
+version = "0.2.0"
 description = "Access to the Glowmarkt API for smart meter data."
 authors = ["Dave Townsend <dtownsend@oxymoronical.com>"]
 license = "MIT"
