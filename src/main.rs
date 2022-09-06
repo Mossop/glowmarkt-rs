@@ -5,7 +5,9 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use flexi_logger::Logger;
-use glowmarkt::{Device, Error, ErrorKind, GlowmarktApi, ReadingPeriod, Resource};
+use glowmarkt::{
+    align_to_period, split_periods, Device, Error, ErrorKind, GlowmarktApi, ReadingPeriod, Resource,
+};
 use influx::Measurement;
 use serde::Serialize;
 use serde_json::to_string_pretty;
@@ -99,25 +101,49 @@ enum Command {
     },
 }
 
-fn parse_date(date: String) -> Result<OffsetDateTime, String> {
+fn parse_date(date: String, period: ReadingPeriod) -> Result<OffsetDateTime, String> {
     if let Some(date) = date.strip_prefix('-') {
         let offset = date.parse::<i64>().str_err()?;
-        Ok(OffsetDateTime::now_utc() - Duration::minutes(offset))
+        Ok(align_to_period(
+            OffsetDateTime::now_utc() - Duration::minutes(offset),
+            period,
+        ))
     } else {
-        OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+        OffsetDateTime::parse(&date, &Iso8601::DEFAULT)
+            .str_err()
+            .and_then(|date| {
+                let now = OffsetDateTime::now_utc();
+                if date > now {
+                    Err("Cannot use a date that is in the future.".to_string())
+                } else {
+                    Ok(align_to_period(date, period))
+                }
+            })
     }
 }
 
-fn parse_end_date(date: Option<String>) -> Result<OffsetDateTime, String> {
+fn parse_end_date(date: Option<String>, period: ReadingPeriod) -> Result<OffsetDateTime, String> {
     if let Some(date) = date {
         if let Some(date) = date.strip_prefix('-') {
             let offset = date.parse::<i64>().str_err()?;
-            Ok(OffsetDateTime::now_utc() - Duration::minutes(offset))
+            Ok(align_to_period(
+                OffsetDateTime::now_utc() - Duration::minutes(offset),
+                period,
+            ))
         } else {
-            OffsetDateTime::parse(&date, &Iso8601::DEFAULT).str_err()
+            OffsetDateTime::parse(&date, &Iso8601::DEFAULT)
+                .str_err()
+                .and_then(|date| {
+                    let now = OffsetDateTime::now_utc();
+                    if date > now {
+                        Err("Cannot use a date that is in the future.".to_string())
+                    } else {
+                        Ok(align_to_period(date, period))
+                    }
+                })
         }
     } else {
-        Ok(OffsetDateTime::now_utc())
+        Ok(align_to_period(OffsetDateTime::now_utc(), period))
     }
 }
 
@@ -156,15 +182,20 @@ async fn readings(
     start: String,
     end: Option<String>,
 ) -> Result<(), String> {
-    let start = parse_date(start)?;
-    let end = parse_end_date(end)?;
+    let period = ReadingPeriod::HalfHour;
+    let start = parse_date(start, period)?;
+    let end = parse_end_date(end, period)?;
+    let ranges = split_periods(start, end, period);
 
-    let readings = api
-        .readings(&resource, &start, &end, ReadingPeriod::HalfHour)
-        .await
-        .str_err()?;
+    for (start, end) in ranges {
+        let readings = api
+            .readings(&resource, &start, &end, period)
+            .await
+            .str_err()?;
 
-    println!("{}", to_string_pretty(&readings).str_err()?);
+        println!("{}", to_string_pretty(&readings).str_err()?);
+    }
+
     Ok(())
 }
 
@@ -176,8 +207,11 @@ async fn influx(
     start: String,
     end: Option<String>,
 ) -> Result<(), String> {
-    let start = parse_date(start)?;
-    let end = parse_end_date(end)?;
+    let period = ReadingPeriod::HalfHour;
+    let start = parse_date(start, period)?;
+    let end = parse_end_date(end, period)?;
+    let ranges = split_periods(start, end, period);
+
     let mut measurements = BTreeMap::new();
 
     let resources = api.resources().await?;
@@ -187,8 +221,7 @@ async fn influx(
         tags: &BTreeMap<String, String>,
         resources: &HashMap<String, Resource>,
         device: Device,
-        start: &OffsetDateTime,
-        end: &OffsetDateTime,
+        ranges: &Vec<(OffsetDateTime, OffsetDateTime)>,
         measurements: &mut BTreeMap<OffsetDateTime, Vec<Measurement>>,
     ) -> Result<(), Error> {
         let mut tags = tags.clone();
@@ -198,22 +231,25 @@ async fn influx(
             if let Some(resource) = resources.get(&sensor.resource_id) {
                 let mut tags = tags.clone();
                 add_tags_for_resource(&mut tags, resource);
-                let readings = api
-                    .readings(&resource.id, start, end, ReadingPeriod::HalfHour)
-                    .await?;
 
-                for reading in readings {
-                    let mut measurement =
-                        Measurement::new("glowmarkt", reading.start, tags.clone());
-                    measurement.add_field(
-                        field_for_classifier(&resource.classifier),
-                        reading.value as f64,
-                    );
+                for (start, end) in ranges {
+                    let readings = api
+                        .readings(&resource.id, start, end, ReadingPeriod::HalfHour)
+                        .await?;
 
-                    measurements
-                        .entry(reading.start)
-                        .or_default()
-                        .push(measurement);
+                    for reading in readings {
+                        let mut measurement =
+                            Measurement::new("glowmarkt", reading.start, tags.clone());
+                        measurement.add_field(
+                            field_for_classifier(&resource.classifier),
+                            reading.value as f64,
+                        );
+
+                        measurements
+                            .entry(reading.start)
+                            .or_default()
+                            .push(measurement);
+                    }
                 }
             }
         }
@@ -223,32 +259,14 @@ async fn influx(
 
     if let Some(device) = device {
         if let Some(device) = api.device(&device).await? {
-            process_device(
-                &api,
-                &tags,
-                &resources,
-                device,
-                &start,
-                &end,
-                &mut measurements,
-            )
-            .await?;
+            process_device(&api, &tags, &resources, device, &ranges, &mut measurements).await?;
         } else {
             eprintln!("Error: Unknown device {}", device);
         }
     } else {
         let devices = api.devices().await?.into_values();
         for device in devices {
-            process_device(
-                &api,
-                &tags,
-                &resources,
-                device,
-                &start,
-                &end,
-                &mut measurements,
-            )
-            .await?;
+            process_device(&api, &tags, &resources, device, &ranges, &mut measurements).await?;
         }
     }
 

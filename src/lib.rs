@@ -8,7 +8,8 @@ use std::{collections::HashMap, fmt::Display};
 use error::maybe;
 use reqwest::{Client, RequestBuilder};
 use serde::{de::DeserializeOwned, Serialize};
-use time::{OffsetDateTime, UtcOffset};
+use time::format_description::well_known::Rfc3339;
+use time::{Duration, Month, OffsetDateTime, UtcOffset};
 
 pub mod api;
 pub mod error;
@@ -48,6 +49,92 @@ pub enum ReadingPeriod {
     Month,
     /// 1 year.
     Year,
+}
+
+fn clear_seconds(date: OffsetDateTime) -> OffsetDateTime {
+    date.replace_second(0)
+        .unwrap()
+        .replace_millisecond(0)
+        .unwrap()
+        .replace_microsecond(0)
+        .unwrap()
+        .replace_nanosecond(0)
+        .unwrap()
+}
+
+/// Attempts to align the given date to the start of a reading period.
+pub fn align_to_period(date: OffsetDateTime, period: ReadingPeriod) -> OffsetDateTime {
+    match period {
+        ReadingPeriod::HalfHour => {
+            if date.minute() >= 30 {
+                clear_seconds(date).replace_minute(30).unwrap()
+            } else {
+                clear_seconds(date).replace_minute(0).unwrap()
+            }
+        }
+        ReadingPeriod::Hour => clear_seconds(date).replace_minute(0).unwrap(),
+        _ => panic!(
+            "Aligning to anything other than half-hour and hour periods is currently unsupported."
+        ),
+    }
+}
+
+fn max_days_for_period(period: ReadingPeriod) -> i64 {
+    match period {
+        ReadingPeriod::HalfHour => 10,
+        ReadingPeriod::Hour => 31,
+        ReadingPeriod::Day => 31,
+        ReadingPeriod::Week => 6 * 7,
+        ReadingPeriod::Month => 366,
+        ReadingPeriod::Year => 366,
+    }
+}
+
+fn increase_by_period(date: OffsetDateTime, period: ReadingPeriod) -> OffsetDateTime {
+    let duration = match period {
+        ReadingPeriod::HalfHour => Duration::minutes(30),
+        ReadingPeriod::Hour => Duration::hours(1),
+        ReadingPeriod::Day => Duration::days(1),
+        ReadingPeriod::Week => Duration::days(7),
+        ReadingPeriod::Month => {
+            let month = date.month();
+            return if month == Month::December {
+                date.replace_month(Month::January).unwrap()
+            } else {
+                date.replace_month(Month::try_from(month as u8 + 1).unwrap())
+                    .unwrap()
+            };
+        }
+        ReadingPeriod::Year => return date.replace_year(date.year() + 1).unwrap(),
+    };
+
+    date + duration
+}
+
+/// Splits a range of readings into a set of ranges that the API will accept.
+pub fn split_periods(
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    period: ReadingPeriod,
+) -> Vec<(OffsetDateTime, OffsetDateTime)> {
+    let mut ranges = Vec::new();
+
+    let duration = Duration::days(max_days_for_period(period));
+    let mut current = start.to_offset(UtcOffset::UTC);
+    let final_end = end.to_offset(UtcOffset::UTC);
+    loop {
+        let next_end = current + duration;
+        if next_end >= final_end {
+            ranges.push((current, final_end));
+            break;
+        } else {
+            ranges.push((current, next_end));
+        }
+
+        current = increase_by_period(next_end, period);
+    }
+
+    ranges
 }
 
 trait Identified {
@@ -382,6 +469,14 @@ impl GlowmarktApi {
         end: &OffsetDateTime,
         period: ReadingPeriod,
     ) -> Result<Vec<Reading>, Error> {
+        log::trace!(
+            "Requesting readings for {} in range {} to {}, period {:?}",
+            resource_id,
+            start.format(&Rfc3339).unwrap(),
+            end.format(&Rfc3339).unwrap(),
+            period
+        );
+
         let period_arg = match period {
             ReadingPeriod::HalfHour => "PT30M".to_string(),
             ReadingPeriod::Hour => "PT1H".to_string(),
