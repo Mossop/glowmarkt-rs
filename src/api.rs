@@ -272,7 +272,7 @@ pub struct Resource {
     pub data_source_type: String,
     #[serde(default, deserialize_with = "ds_type_info_deserializer")]
     pub data_source_resource_type_info: Option<DataSourceResourceTypeInfo>,
-    pub data_source_unit_info: serde_json::Value,
+    pub data_source_unit_info: Option<serde_json::Value>,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
