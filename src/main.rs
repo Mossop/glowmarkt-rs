@@ -75,6 +75,7 @@ enum Command {
         id: Option<String>,
     },
     /// Lists meter readings.
+    ///
     /// Times are expressed either in ISO-8601 format (e.g. 2023-11-01T00:00:00Z) or as a
     /// negative offset from the current time in minutes, so `-1440` would be
     /// interpreted as 24 hours ago.
@@ -87,6 +88,7 @@ enum Command {
         to: Option<String>,
     },
     /// Retrieves device data in InfluxDB line protocol.
+    ///
     /// Times are expressed either in ISO-8601 format (e.g. 2023-11-01T00:00:00Z) or as a
     /// negative offset from the current time in minutes, so `-1440` would be
     /// interpreted as 24 hours ago.
