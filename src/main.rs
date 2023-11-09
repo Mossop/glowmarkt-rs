@@ -116,7 +116,9 @@ fn parse_date(date: String, period: ReadingPeriod) -> Result<OffsetDateTime, Str
         ))
     } else {
         OffsetDateTime::parse(&date, &Iso8601::DEFAULT)
-            .str_err()
+            .map_err(|_| {
+                format!("Couldn't format the date '{date}' as ISO-8601, try '2023-01-01T00:00:00Z'")
+            })
             .and_then(|date| {
                 let now = OffsetDateTime::now_utc();
                 if date > now {
@@ -138,7 +140,11 @@ fn parse_end_date(date: Option<String>, period: ReadingPeriod) -> Result<OffsetD
             ))
         } else {
             OffsetDateTime::parse(&date, &Iso8601::DEFAULT)
-                .str_err()
+                .map_err(|_| {
+                    format!(
+                        "Couldn't format the date '{date}' as ISO-8601, try '2023-01-01T00:00:00Z'"
+                    )
+                })
                 .and_then(|date| {
                     let now = OffsetDateTime::now_utc();
                     if date > now {
