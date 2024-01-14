@@ -247,9 +247,13 @@ async fn influx(
                 add_tags_for_resource(&mut tags, resource);
 
                 for (start, end) in ranges {
-                    let readings = api
+                    let readings = match api
                         .readings(&resource.id, start, end, ReadingPeriod::HalfHour)
-                        .await?;
+                        .await
+                    {
+                        Ok(r) => r,
+                        Err(_) => return Ok(()),
+                    };
 
                     for reading in readings {
                         let mut measurement =
