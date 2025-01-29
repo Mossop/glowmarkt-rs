@@ -452,6 +452,16 @@ impl GlowmarktApi {
         )
     }
 
+    /// Retrieves the latest tariff that is being applied to a resource.
+    pub async fn latest_tariff(
+        &self,
+        resource_id: &str,
+    ) -> Result<api::LatestTariffResponse, Error> {
+        self.get_request(format!("resource/{}/tariff", resource_id))
+            .request()
+            .await
+    }
+
     /// Retrieves the readings for a single resource.
     ///
     /// The API docs suggest that the start date should be set to the beginning
