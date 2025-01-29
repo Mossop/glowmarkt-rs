@@ -279,6 +279,37 @@ pub struct Resource {
     pub created_at: OffsetDateTime,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestTariffResponse {
+    pub data: Vec<TariffData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TariffData {
+    pub plan: Vec<Plan>,
+    pub cid: String,
+    pub commodity: String,
+    pub from: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub plan_detail: Vec<PlanDetail>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanDetail {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<f64>,
+}
+
 type ReadingTuple = (i64, f32);
 
 #[derive(Deserialize, Debug)]

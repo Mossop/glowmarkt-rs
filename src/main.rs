@@ -87,6 +87,11 @@ enum Command {
         /// Start time of last reading (defaults to now).
         to: Option<String>,
     },
+    /// Retrieves the latest tariff that is being applied to a resource.
+    Tariff {
+        /// The resource to retrieve the tariff for.
+        resource_id: String,
+    },
     /// Retrieves device data in InfluxDB line protocol.
     ///
     /// Times are expressed either in ISO-8601 format (e.g. 2023-11-01T00:00:00Z) or as a
@@ -209,6 +214,14 @@ async fn readings(
 
         println!("{}", to_string_pretty(&readings).str_err()?);
     }
+
+    Ok(())
+}
+
+async fn latest_tariff(api: GlowmarktApi, resource: String) -> Result<(), String> {
+    let tariff = api.latest_tariff(&resource).await.str_err()?;
+
+    println!("{}", to_string_pretty(&tariff).str_err()?);
 
     Ok(())
 }
@@ -360,6 +373,7 @@ async fn main() -> Result<(), String> {
             from,
             to,
         } => readings(api, resource_id, from, to).await,
+        Command::Tariff { resource_id } => latest_tariff(api, resource_id).await,
         Command::Influx {
             device,
             no_strip,
