@@ -92,6 +92,11 @@ enum Command {
         /// The resource to retrieve the tariff for.
         resource_id: String,
     },
+    /// Retrieves the tariff history that is being applied to a cost resource.
+    TariffList {
+        /// The resource to retrieve the tariff history for.
+        resource_id: String,
+    },
     /// Retrieves device data in InfluxDB line protocol.
     ///
     /// Times are expressed either in ISO-8601 format (e.g. 2023-11-01T00:00:00Z) or as a
@@ -220,6 +225,14 @@ async fn readings(
 
 async fn latest_tariff(api: GlowmarktApi, resource: String) -> Result<(), String> {
     let tariff = api.latest_tariff(&resource).await.str_err()?;
+
+    println!("{}", to_string_pretty(&tariff).str_err()?);
+
+    Ok(())
+}
+
+async fn tariff_list(api: GlowmarktApi, resource: String) -> Result<(), String> {
+    let tariff = api.tariff_list(&resource).await.str_err()?;
 
     println!("{}", to_string_pretty(&tariff).str_err()?);
 
@@ -374,6 +387,7 @@ async fn main() -> Result<(), String> {
             to,
         } => readings(api, resource_id, from, to).await,
         Command::Tariff { resource_id } => latest_tariff(api, resource_id).await,
+        Command::TariffList { resource_id } => tariff_list(api, resource_id).await,
         Command::Influx {
             device,
             no_strip,
