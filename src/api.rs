@@ -296,7 +296,7 @@ pub struct TariffData {
         deserialize_with = "deserialize_datetime",
         serialize_with = "serialize_datetime"
     )]
-    pub from: OffsetDateTime,
+    pub from: PrimitiveDateTime,
     pub name: String,
 }
 
@@ -317,14 +317,14 @@ pub struct TariffListData {
         serialize_with = "serialize_datetime_opt",
         skip_serializing_if = "Option::is_none"
     )]
-    effective_date: Option<OffsetDateTime>,
+    effective_date: Option<PrimitiveDateTime>,
     #[serde(
         default,
         deserialize_with = "deserialize_datetime_opt",
         serialize_with = "serialize_datetime_opt",
         skip_serializing_if = "Option::is_none"
     )]
-    from: Option<OffsetDateTime>,
+    from: Option<PrimitiveDateTime>,
     #[serde(default)]
     display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -349,7 +349,7 @@ pub struct ReadingsResponse {
     pub data: Vec<ReadingTuple>,
 }
 
-fn deserialize_datetime<'de, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
+fn deserialize_datetime<'de, D>(deserializer: D) -> Result<PrimitiveDateTime, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -357,12 +357,10 @@ where
     let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
         .map_err(serde::de::Error::custom)?;
 
-    let primitive_dt = PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?;
-
-    Ok(primitive_dt.assume_utc())
+    Ok(PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?)
 }
 
-fn serialize_datetime<S>(datetime: &OffsetDateTime, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_datetime<S>(datetime: &PrimitiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -375,7 +373,7 @@ where
     serializer.serialize_str(&formatted)
 }
 
-fn deserialize_datetime_opt<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
+fn deserialize_datetime_opt<'de, D>(deserializer: D) -> Result<Option<PrimitiveDateTime>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -387,14 +385,14 @@ where
         let primitive_dt =
             PrimitiveDateTime::parse(&s, &format).map_err(serde::de::Error::custom)?;
 
-        Ok(Some(primitive_dt.assume_utc()))
+        Ok(Some(primitive_dt))
     } else {
         Ok(None)
     }
 }
 
 fn serialize_datetime_opt<S>(
-    datetime: &Option<OffsetDateTime>,
+    datetime: &Option<PrimitiveDateTime>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
