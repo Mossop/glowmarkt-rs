@@ -5,9 +5,10 @@ use std::{collections::HashMap, fmt};
 
 use serde::{
     de::{self, MapAccess, Visitor},
-    Deserialize, Deserializer, Serialize,
+    Deserialize, Deserializer, Serialize, Serializer,
 };
-use time::OffsetDateTime;
+use serde_json::{Map, Value};
+use time::{format_description, OffsetDateTime, PrimitiveDateTime};
 
 use crate::{Error, ErrorKind};
 
@@ -291,23 +292,53 @@ pub struct TariffData {
     pub plan: Vec<Plan>,
     pub cid: String,
     pub commodity: String,
-    pub from: String,
+    #[serde(
+        deserialize_with = "deserialize_datetime",
+        serialize_with = "serialize_datetime"
+    )]
+    pub from: OffsetDateTime,
     pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Plan {
-    pub plan_detail: Vec<PlanDetail>,
+pub struct TariffListResponse {
+    pub data: Vec<TariffListData>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PlanDetail {
+pub struct TariffListData {
+    id: String,
+    plan: Vec<Plan>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_datetime_opt",
+        serialize_with = "serialize_datetime_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    effective_date: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_datetime_opt",
+        serialize_with = "serialize_datetime_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    from: Option<OffsetDateTime>,
+    #[serde(default)]
+    display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate: Option<f64>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub plan_detail: Vec<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub standing: Option<f64>,
+    pub week_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 type ReadingTuple = (i64, f32);
@@ -316,6 +347,71 @@ type ReadingTuple = (i64, f32);
 #[serde(rename_all = "camelCase")]
 pub struct ReadingsResponse {
     pub data: Vec<ReadingTuple>,
+}
+
+fn deserialize_datetime<'de, D>(deserializer: D) -> Result<OffsetDateTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+        .map_err(serde::de::Error::custom)?;
+
+    let primitive_dt = PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?;
+
+    Ok(primitive_dt.assume_utc())
+}
+
+fn serialize_datetime<S>(datetime: &OffsetDateTime, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+        .map_err(serde::ser::Error::custom)?;
+
+    let formatted = datetime
+        .format(&format)
+        .map_err(serde::ser::Error::custom)?;
+    serializer.serialize_str(&formatted)
+}
+
+fn deserialize_datetime_opt<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<&str> = Option::deserialize(deserializer)?;
+    if let Some(s) = s {
+        let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .map_err(serde::de::Error::custom)?;
+
+        let primitive_dt =
+            PrimitiveDateTime::parse(&s, &format).map_err(serde::de::Error::custom)?;
+
+        Ok(Some(primitive_dt.assume_utc()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn serialize_datetime_opt<S>(
+    datetime: &Option<OffsetDateTime>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if let Some(datetime) = datetime {
+        // Define the same format used for deserialization
+        let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .map_err(serde::ser::Error::custom)?;
+
+        let formatted = datetime
+            .format(&format)
+            .map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&formatted)
+    } else {
+        serializer.serialize_none()
+    }
 }
 
 fn ds_type_info_deserializer<'de, D>(

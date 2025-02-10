@@ -5,6 +5,7 @@
 
 use std::{collections::HashMap, fmt::Display};
 
+use api::{TariffData, TariffListData};
 use error::maybe;
 use reqwest::{Client, RequestBuilder};
 use serde::{de::DeserializeOwned, Serialize};
@@ -453,13 +454,23 @@ impl GlowmarktApi {
     }
 
     /// Retrieves the latest tariff that is being applied to a resource.
-    pub async fn latest_tariff(
-        &self,
-        resource_id: &str,
-    ) -> Result<api::LatestTariffResponse, Error> {
-        self.get_request(format!("resource/{}/tariff", resource_id))
+    pub async fn latest_tariff(&self, resource_id: &str) -> Result<Vec<TariffData>, Error> {
+        let response: api::LatestTariffResponse = self
+            .get_request(format!("resource/{}/tariff", resource_id))
             .request()
-            .await
+            .await?;
+
+        Ok(response.data)
+    }
+
+    /// Retrieves the latest tariff that is being applied to a resource.
+    pub async fn tariff_list(&self, resource_id: &str) -> Result<Vec<TariffListData>, Error> {
+        let response: api::TariffListResponse = self
+            .get_request(format!("resource/{}/tariff-list", resource_id))
+            .request()
+            .await?;
+
+        Ok(response.data)
     }
 
     /// Retrieves the readings for a single resource.
