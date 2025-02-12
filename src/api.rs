@@ -309,26 +309,26 @@ pub struct TariffListResponse {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TariffListData {
-    id: String,
-    plan: Vec<Plan>,
+    pub id: String,
+    pub plan: Vec<Plan>,
     #[serde(
         default,
         deserialize_with = "deserialize_datetime_opt",
         serialize_with = "serialize_datetime_opt",
         skip_serializing_if = "Option::is_none"
     )]
-    effective_date: Option<PrimitiveDateTime>,
+    pub effective_date: Option<PrimitiveDateTime>,
     #[serde(
         default,
         deserialize_with = "deserialize_datetime_opt",
         serialize_with = "serialize_datetime_opt",
         skip_serializing_if = "Option::is_none"
     )]
-    from: Option<PrimitiveDateTime>,
+    pub from: Option<PrimitiveDateTime>,
     #[serde(default)]
-    display_name: Option<String>,
+    pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
