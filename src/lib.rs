@@ -248,7 +248,7 @@ struct ApiRequest<'a> {
     request: RequestBuilder,
 }
 
-impl<'a> ApiRequest<'a> {
+impl ApiRequest<'_> {
     async fn request<T: DeserializeOwned>(self) -> Result<T, Error> {
         self.endpoint.api_call(self.client, self.request).await
     }

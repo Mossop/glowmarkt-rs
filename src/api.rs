@@ -357,7 +357,7 @@ where
     let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
         .map_err(serde::de::Error::custom)?;
 
-    Ok(PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?)
+    PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)
 }
 
 fn serialize_datetime<S>(datetime: &PrimitiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
@@ -383,7 +383,7 @@ where
             .map_err(serde::de::Error::custom)?;
 
         let primitive_dt =
-            PrimitiveDateTime::parse(&s, &format).map_err(serde::de::Error::custom)?;
+            PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?;
 
         Ok(Some(primitive_dt))
     } else {
