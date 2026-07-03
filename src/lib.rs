@@ -280,7 +280,7 @@ impl GlowmarktApi {
         Self::auth(Default::default(), username, password).await
     }
 
-    fn get_request<S>(&self, path: S) -> ApiRequest
+    fn get_request<'a, S>(&'a self, path: S) -> ApiRequest<'a>
     where
         S: Display,
     {
@@ -296,7 +296,7 @@ impl GlowmarktApi {
         }
     }
 
-    fn query_request<S, T>(&self, path: S, query: &T) -> ApiRequest
+    fn query_request<'a, S, T>(&'a self, path: S, query: &T) -> ApiRequest<'a>
     where
         S: Display,
         T: Serialize + ?Sized,

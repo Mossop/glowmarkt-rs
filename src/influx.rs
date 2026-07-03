@@ -96,7 +96,7 @@ pub fn add_tags_for_resource(tags: &mut BTreeMap<String, String>, resource: &Res
 
 pub fn field_for_classifier(classifier: &Option<String>) -> &str {
     if let Some(classifier) = classifier {
-        classifier.split('.').last().unwrap()
+        classifier.split('.').next_back().unwrap()
     } else {
         "value"
     }
