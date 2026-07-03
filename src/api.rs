@@ -354,8 +354,9 @@ where
     D: Deserializer<'de>,
 {
     let s: &str = Deserialize::deserialize(deserializer)?;
-    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-        .map_err(serde::de::Error::custom)?;
+    let format =
+        format_description::parse_borrowed::<1>("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .map_err(serde::de::Error::custom)?;
 
     PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)
 }
@@ -364,8 +365,9 @@ fn serialize_datetime<S>(datetime: &PrimitiveDateTime, serializer: S) -> Result<
 where
     S: Serializer,
 {
-    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-        .map_err(serde::ser::Error::custom)?;
+    let format =
+        format_description::parse_borrowed::<1>("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .map_err(serde::ser::Error::custom)?;
 
     let formatted = datetime
         .format(&format)
@@ -379,8 +381,10 @@ where
 {
     let s: Option<&str> = Option::deserialize(deserializer)?;
     if let Some(s) = s {
-        let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-            .map_err(serde::de::Error::custom)?;
+        let format = format_description::parse_borrowed::<1>(
+            "[year]-[month]-[day] [hour]:[minute]:[second]",
+        )
+        .map_err(serde::de::Error::custom)?;
 
         let primitive_dt =
             PrimitiveDateTime::parse(s, &format).map_err(serde::de::Error::custom)?;
@@ -400,8 +404,10 @@ where
 {
     if let Some(datetime) = datetime {
         // Define the same format used for deserialization
-        let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-            .map_err(serde::ser::Error::custom)?;
+        let format = format_description::parse_borrowed::<1>(
+            "[year]-[month]-[day] [hour]:[minute]:[second]",
+        )
+        .map_err(serde::ser::Error::custom)?;
 
         let formatted = datetime
             .format(&format)
