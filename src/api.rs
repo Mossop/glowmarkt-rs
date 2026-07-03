@@ -341,7 +341,7 @@ pub struct Plan {
     pub source: Option<String>,
 }
 
-type ReadingTuple = (i64, f32);
+type ReadingTuple = (i64, f64);
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

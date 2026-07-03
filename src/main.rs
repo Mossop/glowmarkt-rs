@@ -284,10 +284,8 @@ async fn influx(
                     for reading in readings {
                         let mut measurement =
                             Measurement::new("glowmarkt", reading.start, tags.clone());
-                        measurement.add_field(
-                            field_for_classifier(&resource.classifier),
-                            reading.value as f64,
-                        );
+                        measurement
+                            .add_field(field_for_classifier(&resource.classifier), reading.value);
 
                         measurements
                             .entry(reading.start)

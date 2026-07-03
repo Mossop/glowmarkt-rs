@@ -188,7 +188,7 @@ pub struct Reading {
     #[serde(skip)]
     pub period: ReadingPeriod,
     /// The total usage.
-    pub value: f32,
+    pub value: f64,
 }
 
 /// The API endpoint.
